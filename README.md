@@ -1,5 +1,5 @@
 # 2D2P
-Pipeline for processing **2 D**imensional virtual reality **2 P**hoton calcium imaging data.
+Pipeline for processing **2 D**imensional virtual reality **2 P**hoton (**2D2P**) calcium imaging data.
 
 2D2P includes the following modules so far:
 - rotation center detection
