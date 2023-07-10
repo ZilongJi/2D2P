@@ -16,6 +16,9 @@ class ZdriftProcessor(tk.Frame):
         self.folder = folder
         self.appfolder = appfolder
         self.grid()
+        
+        # initialize the numer of frames for later correlation analysis
+        self.numFrames = tk.StringVar()
 
         self.create_widgets()
         self.create_canvas()
@@ -28,6 +31,10 @@ class ZdriftProcessor(tk.Frame):
         #create a button to import RElog file
         tk.Button(self, text="Import RElog", command=self.import_RElog).grid(row=1, column=0)
         
+        # create a label and entry to set the number of frames for correlation analysis
+        tk.Label(self, text="numFrames").grid(row=2, column=0)
+        tk.Entry(self, textvariable=self.numFrames).grid(row=3, column=0)
+        
         #create a button to unrottate the tiff
         tk.Button(self, text="Unrotate Tiff", command=self.unrotatetiff).grid(row=0, column=1)
 
@@ -38,12 +45,12 @@ class ZdriftProcessor(tk.Frame):
     def create_canvas(self):
         # create a canvas to display results
         self.canvas = tk.Canvas(self, width=512, height=256, bg="white")
-        self.canvas.grid(row=2, column=0, columnspan=2)
+        self.canvas.grid(row=4, column=0, columnspan=2)
         
     def create_log_window(self):
         # create a text widget to display all the logs
         self.log_text = tk.Text(self, height=30, width=50)
-        self.log_text.grid(row=0, column=2, rowspan=3)  
+        self.log_text.grid(row=0, column=2, rowspan=5)  
         self.log_text.configure(state="disabled")
     
     def log_message(self, message):
@@ -137,8 +144,8 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = ZdriftProcessor(
         master=root,
-        folder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/",
-        appfolder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
+        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
     )
     app.mainloop()
 

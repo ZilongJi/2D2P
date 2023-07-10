@@ -298,8 +298,8 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = CenterDetector(
         master=root,
-        folder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023",
-        appfolder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
+        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
     )
     app.mainloop()
     

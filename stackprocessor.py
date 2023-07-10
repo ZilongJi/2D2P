@@ -120,7 +120,7 @@ class StackProcessor(tk.Frame):
 
         # unrotate each frame in the tiff file with the detected rotation center
         unrotFrames = UnrotateFrame_SITiffIO(
-            self.tifffilename, self.relogfilename, rotCenter=[self.rotx, self.roty]
+            self.tifffilename, self.relogfilename, rotCenter=[self.rotx, self.roty], numFrames=None
         )
 
         # reshape rnrotFrames which is a list to a 5D array with shape (volumes, stacks, frames, width, height)
@@ -189,7 +189,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = StackProcessor(
         master=root,
-        folder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023",
-        appfolder="/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
+        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
     )
     app.mainloop()

@@ -36,7 +36,7 @@ class App(tk.Tk):
 
 # Create an instance of the merged class and run the application
 folder_path = (
-    "/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023"
+    "/home/zilong/Desktop/2D2P/Data/162_10072023"
 )
 app = App(folder_path)
 app.title("2D2P")

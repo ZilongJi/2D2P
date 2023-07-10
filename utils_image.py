@@ -211,7 +211,7 @@ def getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles):
     
     return RotAngles
 
-def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256]): 
+def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256], numFrames=None): 
     """
     Unrotate each frame with the corresponding rotation angle, as well as a rotation center
     using SITiffIO
@@ -231,10 +231,16 @@ def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256]):
     N = S.get_n_frames() #number of frames
     RotAngles = S.get_all_theta() #all rotation angles
     
+    #if numFrames is None rotate all frames, else rotate the last numFrames frames
+    if numFrames is None:
+        frameInds = np.arange(N)
+    else:
+        frameInds = np.arange(N-numFrames, N)
+    
     #for each frame, unrotate it with the corresponding rotation angle using Image.rotate
     #and store in a list
     UnrotatedFrames = []
-    for i in range(N):
+    for i in frameInds:
         frame = S.get_frame(i+1)
         #unrotate the frame
         unrotatedFrame = Image.fromarray(frame).rotate(RotAngles[i], center=rotCenter)
