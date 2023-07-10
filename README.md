@@ -1,2 +1,2 @@
 # 2D2P
-2 Dimensional virtual reality  2-photon imaging pipeline
+2 Dimensional virtual reality 2-Photon imaging pipeline
