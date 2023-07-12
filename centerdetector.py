@@ -19,12 +19,12 @@ from scanimagetiffio.scanimagetiffio import SITiffIO
 from utils_image import getMeanTiff_randomsampling, getMeanTiff_equalsampling
 
 class CenterDetector(tk.Frame):
-    def __init__(self, master=None, folder=None, appfolder=None):
+    def __init__(self, master=None, folder=None, appfolder=None, app=None):
         super().__init__(master)
         self.master = master
         self.folder = folder
         self.appfolder = appfolder
-        
+        self.app = app
         self.grid()
 
         # initialize the value of fraction or Bins for later use
@@ -33,8 +33,6 @@ class CenterDetector(tk.Frame):
         self.create_widgets()
         self.create_canvas()
         self.create_canvas4angle()
-        # create a text widget to display all the logs
-        self.create_log_window()
 
         self.circlecenter = np.asarray(
             [0, 0]
@@ -65,22 +63,6 @@ class CenterDetector(tk.Frame):
         # arrange the canvas to the right side of widgets
         self.canvas4angle = tk.Canvas(self, width=512, height=256, bg="white")
         self.canvas4angle.grid(row=5, column=0, columnspan=2)
-        
-    def create_log_window(self):
-        # create a text widget to display all the logs
-        self.log_text = tk.Text(self, height=30, width=50)
-        self.log_text.grid(row=0, column=2, rowspan=6)
-        self.log_text.configure(state="disabled")
-
-    def log_message(self, message):
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", message + "\n")
-        # add an line print '-------------------' to separate different logs
-        self.log_text.insert("end", "-" * 20 + "\n")
-        # disable the text widget so that the user cannot change the logs
-        self.log_text.configure(state="disabled")
-        # scroll the text widget to the end
-        self.log_text.see("end")
 
     def import_tiff(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as tiff and all files
@@ -90,7 +72,7 @@ class CenterDetector(tk.Frame):
             filetypes=(("tiff files", "*.tif"), ("all files", "*.*")),
         )
         # log the message in the text widget
-        self.log_message("Imported tiff file: " + self.tifffilename)
+        self.app.log_message("Imported tiff file: " + self.tifffilename)
 
     def import_RElog(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as txt and all files
@@ -100,20 +82,20 @@ class CenterDetector(tk.Frame):
             filetypes=(("txt files", "*.txt"), ("all files", "*.*")),
         )
         # log the message in the text widget
-        self.log_message("Imported RElog file: " + self.relogfilename)
+        self.app.log_message("Imported RElog file: " + self.relogfilename)
 
     def averagetif(self):
         # read the tiff file via SITiffIO
-        self.log_message("Reading tiff file...")
+        self.app.log_message("Reading tiff file...")
         S = SITiffIO()
         S.open_tiff_file(self.tifffilename, "r")
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
         self.S = S
-        self.log_message(
+        self.app.log_message(
             "Counted " + str(S.get_n_frames()) + " frames in the tif file."
         )
-        self.log_message("Done reading tiff file.")
+        self.app.log_message("Done reading tiff file.")
 
         try:
             # change string to float
@@ -122,17 +104,17 @@ class CenterDetector(tk.Frame):
             #if fracorBins is smaller than 1, it is a fraction then use getMeanTiff_randomsampling
             #other wise it is a number of bins then use getMeanTiff_equalsampling
             if fracorBins < 1:
-                self.log_message("Get the averaged image by random sampling...")
+                self.app.log_message("Get the averaged image by random sampling...")
                 self.meantif = getMeanTiff_randomsampling(self.S, frac=fracorBins)
             else:   
-                self.log_message("Get the averaged image by equal sampling...")
+                self.app.log_message("Get the averaged image by equal sampling...")
                 self.meantif = getMeanTiff_equalsampling(self.S, numBins=int(fracorBins))
             
             # display the averaged image on the canvas
             self.display_image(self.meantif)
             
         except ValueError:
-            self.log_message("Error! Please enter a valid fraction number.")
+            self.app.log_message("Error! Please enter a valid fraction number.")
 
         # display the polar plot of all the angle in the rotary encoder file
         self.angles = S.get_all_theta()
@@ -187,7 +169,7 @@ class CenterDetector(tk.Frame):
         with open(self.circlecenterfile, "w") as f:
             f.write("")
 
-        self.log_message("Draw a circle on the image...")
+        self.app.log_message("Draw a circle on the image...")
         # draw a circle on the image whose center is the position of the left mouse click
         # the size of the circle can be changed by moving the mouse
         # the position of the circle can be changed by pressing up down left right key
@@ -272,7 +254,7 @@ class CenterDetector(tk.Frame):
         self.spaceclicks += 1  # count the number of space clicks
 
         # display the position of the circle center on the text widget
-        self.log_message(
+        self.app.log_message(
             "Center position of the drawed circle:" + str(self.x) + " " + str(self.y)
         )
 
@@ -285,8 +267,8 @@ class CenterDetector(tk.Frame):
 
         # log the number of space clicks and the position of the circle center
         
-        self.log_message("Number of space clicks:" + str(self.spaceclicks))
-        self.log_message("Updated center position:" + str(self.circlecenter))    
+        self.app.log_message("Number of space clicks:" + str(self.spaceclicks))
+        self.app.log_message("Updated center position:" + str(self.circlecenter))    
 
         # save the position to the created txt file without overwriting previous position
         with open(self.circlecenterfile, "a") as f:

@@ -13,12 +13,13 @@ from utils_image import UnrotateFrame_SITiffIO
 
 
 class StackProcessor(tk.Frame):
-    def __init__(self, master=None, folder=None, appfolder=None):
+    def __init__(self, master=None, folder=None, appfolder=None, app=None):
         super().__init__(master)
         self.master = master
         self.folder = folder
         self.appfolder = appfolder
-        self.pack()
+        self.app = app
+        self.grid()
 
         # add tk.Entry widgets to allow users to enter
         # the number of volumes, stacks and frames
@@ -31,42 +32,26 @@ class StackProcessor(tk.Frame):
 
         self.create_widgets()
         self.create_canvas()       
-        self.create_log_window()
 
     def create_widgets(self):
         # create a button to import tiff file
-        tk.Button(self, text="Import ZStack", command=self.import_tiff).pack(side="top")
+        tk.Button(self, text="Import ZStack", command=self.import_tiff).grid(row=0, column=0)
 
         # create a button to import RElog file
-        tk.Button(self, text="Import RElog file", command=self.import_RElog).pack(
-            side="top"
-        )
+        tk.Button(self, text="Import RElog file", command=self.import_RElog).grid(row=1, column=0)
 
         # Create labels and entry widgets for the three numbers entered by the user
-        tk.Label(self, text="Volumes:").pack(side="top")
-        tk.Entry(self, textvariable=self.volumes).pack(side="top")
+        tk.Label(self, text="Volumes:").grid(row=2, column=0)
+        tk.Entry(self, textvariable=self.volumes).grid(row=3, column=0)
 
-        tk.Label(self, text="Stacks:").pack(side="top")
-        tk.Entry(self, textvariable=self.stacks).pack(side="top")
+        tk.Label(self, text="Stacks:").grid(row=4, column=0)
+        tk.Entry(self, textvariable=self.stacks).grid(row=5, column=0)
 
-        tk.Label(self, text="Frames:").pack(side="top")
-        tk.Entry(self, textvariable=self.frames).pack(side="top")
+        tk.Label(self, text="Frames:").grid(row=6, column=0)
+        tk.Entry(self, textvariable=self.frames).grid(row=7, column=0)
 
         # create a button to unrotate the zstacks
-        tk.Button(self, text="Unrotate ZStacks", command=self.unrotatezstack).pack(
-            side="top"
-        )
-
-        # create a quit button
-        tk.Button(self, text="QUIT", fg="red", command=self.master.destroy).pack(
-            side="bottom"
-        )
-
-    def create_log_window(self):
-        # create a text widget to display all the logs
-        self.log_text = tk.Text(self, height=10, width=30)
-        self.log_text.pack(expand=True, fill="both")
-        self.log_text.configure(state="disabled")
+        tk.Button(self, text="Unrotate ZStacks", command=self.unrotatezstack).grid(row=0, column=1)
 
     def create_canvas(self):
         # create a canvas to display the processed stack frames
@@ -74,17 +59,7 @@ class StackProcessor(tk.Frame):
         # that allows me to display each of the frames in the stack by clicking
         # the up and down arrows (need to be created)
         self.canvas = tk.Canvas(self, height=512, width=512, bg="#4D4D4D")
-        self.canvas.pack()
-
-    def log_message(self, message):
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", message + "\n")
-        # add an line print '-------------------' to separate different logs
-        self.log_text.insert("end", "-" * 20 + "\n")
-        # disable the text widget so that the user cannot change the logs
-        self.log_text.configure(state="disabled")
-        # scroll the text widget to the end
-        self.log_text.see("end")
+        self.canvas.grid(row=8, column=0, columnspan=2)
 
     def import_tiff(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as tiff and all files
@@ -94,7 +69,7 @@ class StackProcessor(tk.Frame):
             filetypes=(("tiff files", "*.tif"), ("all files", "*.*")),
         )
         # log the message in the text widget
-        self.log_message("Imported tiff file: " + self.tifffilename)
+        self.app.log_message("Imported tiff file: " + self.tifffilename)
 
     def import_RElog(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as txt and all files
@@ -104,10 +79,10 @@ class StackProcessor(tk.Frame):
             filetypes=(("txt files", "*.txt"), ("all files", "*.*")),
         )
         # log the message in the text widget
-        self.log_message("Imported RElog file: " + self.relogfilename)
+        self.app.log_message("Imported RElog file: " + self.relogfilename)
 
     def unrotatezstack(self):
-        self.log_message("Unrotate tiff file...")
+        self.app.log_message("Unrotate tiff file...")
 
         # read the rotation center from the circlecenter txt file
         circlecenterfilename = self.appfolder + "/circlecenter.txt"
@@ -131,7 +106,7 @@ class StackProcessor(tk.Frame):
             num_s = int(self.stacks.get())
             num_f = int(self.frames.get())
         except ValueError:
-            self.log_message(
+            self.app.log_message(
                 "Error! Please enter the number of volumes, stacks and frames"
             )
             return
@@ -142,7 +117,7 @@ class StackProcessor(tk.Frame):
         )
         # average across the first and third dimension
         self.meanStacks = np.mean(unrotFrames, axis=(0, 2))
-        self.log_message("Unrotation finished...")
+        self.app.log_message("Unrotation finished...")
         #save the unrotated stacks as a npy file in the app folder
         np.save(self.appfolder + "/meanstacks.npy", self.meanStacks)
 
