@@ -15,6 +15,6 @@ Pipeline for processing **2 D**imensional virtual reality **2 P**hoton (**2D2P**
 7. I use vscode to code which can be obtained here: [vscode](https://code.visualstudio.com/docs/setup/linux)
 
 ## Data acquisition flowchart
-![Image](https://github.com/ZilongJi/2D2P/blob/main/Figures/2DVR2P%20Flowchart-3.pdf)
+![Image](Folder/2DVR2P Flowchart-3.pdf)
 
  
