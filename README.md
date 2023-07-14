@@ -12,6 +12,9 @@ Pipeline for processing **2 D**imensional virtual reality **2 P**hoton (**2D2P**
 4. Create a folder named `2D2P` on your computer and `cd 2D2P`
 5. Install [ScanImageTiffIO](https://github.com/rhayman/ScanImageTiffIO) (following the instructions there. Note that `libtiff` will be installed automatically when do cmake)
 6. Git clone [2D2P](https://github.com/ZilongJi/2D2P) and install all the dependencies (will create a pip install later..)
-7. I use vscode to code which can be obtained here: [vscode](https://code.visualstudio.com/docs/setup/linux) 
+7. I use vscode to code which can be obtained here: [vscode](https://code.visualstudio.com/docs/setup/linux)
+
+## Imaging flowchart
+![Alt Text]([relative/path/to/image.jpg](https://github.com/ZilongJi/2D2P/blob/main/Figures/2DVR2P%20Flowchart-3.pdf)https://github.com/ZilongJi/2D2P/blob/main/Figures/2DVR2P%20Flowchart-3.pdf)
 
  
