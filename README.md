@@ -21,4 +21,5 @@ Click to zoom in for details.
 ## Using the GUI
 <img src="https://github.com/ZilongJi/2D2P/blob/main/Figures/2D2PAPP.png" width=50% height=50%>
 
- 
+## Troubleshooting
+- [ ] 15/07/2023: Analysis pipeline tested. But z-drift correlation does not work. Need to add image registration to unrotated tiff. 
