@@ -18,4 +18,7 @@ Pipeline for processing **2 D**imensional virtual reality **2 P**hoton (**2D2P**
 <img src="https://github.com/ZilongJi/2D2P/blob/main/Figures/2DVR2P%20Flowchart.png" width=50% height=50%>
 Click to zoom in for details. 
 
+## Using the GUI
+<img src="https://github.com/ZilongJi/2D2P/blob/main/Figures/2D2PAPP.png" width=50% height=50%>
+
  
