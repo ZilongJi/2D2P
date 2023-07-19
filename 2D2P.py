@@ -4,7 +4,6 @@ from centerdetector import CenterDetector
 from stackprocessor import StackProcessor
 from zdriftprocessor import ZdriftProcessor
 
-
 class TwoDTWoP(tk.Tk):
     def __init__(self, folder):
         super().__init__()
