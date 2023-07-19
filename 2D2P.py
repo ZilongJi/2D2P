@@ -28,14 +28,14 @@ class TwoDTWoP(tk.Tk):
         self.zdrift_processor = ZdriftProcessor(self, self.folder, self.appfolder, app=self)
 
         # Place the three classes into the main window using the grid manager
-        self.center_processor.grid(row=0, column=0, rowspan=2)
-        self.stack_processor.grid(row=0, column=1, rowspan=2)
-        self.zdrift_processor.grid(row=0, column=2)
+        self.center_processor.grid(row=0, column=0)
+        self.stack_processor.grid(row=0, column=1)
+        self.zdrift_processor.grid(row=0, column=2, rowspan=2)
 
     def create_log_window(self):
         # create a text widget to display all the logs
-        self.log_text = tk.Text(self, height=30, width=50)
-        self.log_text.grid(row=1, column=2)
+        self.log_text = tk.Text(self, height=30, width=150)
+        self.log_text.grid(row=1, column=0, columnspan=2)
         self.log_text.configure(state="disabled")
         
     def log_message(self, message):
@@ -51,7 +51,7 @@ class TwoDTWoP(tk.Tk):
 
 # Create an instance of the merged class and run the application
 folder_path = (
-    "/home/zilong/Desktop/2D2P/Data/162_10072023"
+    "/home/zilong/Desktop/2D2P/Data"
 )
 app = TwoDTWoP(folder_path)
 app.title("2D2P")

@@ -25,7 +25,10 @@ class ZdriftProcessor(tk.Frame):
         self.numFrames = tk.StringVar()
 
         self.create_widgets()
-        self.create_canvas()
+  
+        self.create_canvas_reg()      
+        self.create_canvas_shift()
+        self.create_canvas_corr()
         
     def create_widgets(self):
         #create a button to import tiff file
@@ -44,11 +47,20 @@ class ZdriftProcessor(tk.Frame):
         #create a button to do correlation analysis
         tk.Button(self, text="Correlation Analysis", command=self.correlationanalysis).grid(row=1, column=1)
         
+    def create_canvas_reg(self):
+        # create a canvas to display registration results
+        self.canvas_reg = tk.Canvas(self, width=512, height=512, bg="#4D4D4D")
+        self.canvas_reg.grid(row=4, column=0, columnspan=2)
         
-    def create_canvas(self):
+    def create_canvas_shift(self):
+        # create a canvas to display rigid and non-rigid shift results
+        self.canvas_shift = tk.Canvas(self, width=512, height=128, bg="white")  
+        self.canvas_shift.grid(row=5, column=0, columnspan=2)
+        
+    def create_canvas_corr(self):
         # create a canvas to display results
-        self.canvas = tk.Canvas(self, width=512, height=256, bg="white")
-        self.canvas.grid(row=4, column=0, columnspan=2)
+        self.canvas_corr = tk.Canvas(self, width=512, height=256, bg="white")
+        self.canvas_corr.grid(row=6, column=0, columnspan=2)
         
     def import_tiff(self):
         # import tiff file
@@ -79,7 +91,7 @@ class ZdriftProcessor(tk.Frame):
         S = SITiffIO()
         S.open_tiff_file(self.tifffilename, "r")
         tailtiffname = self.folder+'/tail.tif'
-        S.save_tail(1000, tailtiffname) #save the last 1000 frames to a tail tiff file
+        S.save_tail(int(self.numFrames.get()), tailtiffname) #save the last 1000 frames to a tail tiff file
 
         #load the tail tiff file together with the rotary data
         S.open_tiff_file(tailtiffname, "r") 
@@ -87,17 +99,39 @@ class ZdriftProcessor(tk.Frame):
         S.interp_times()  # might take a while...
            
         # unrotate each frame in the tiff file with the detected rotation center
-        self.unrotFrames  = UnrotateFrame_SITiffIO(
-            S, rotCenter=[self.rotx, self.roty], numFrames=int(self.numFrames.get())
-        )
+        self.unrotFrames  = UnrotateFrame_SITiffIO(S, rotCenter=[self.rotx, self.roty], numFrames=None)
 
         self.app.log_message("Unrotation and registration finished...")
         
         #perform image registraion
-        meanRegImg = RegFrame(self.unrotFrames)
+        self.meanRegImg = RegFrame(self.unrotFrames)
         
-        #display the unrotated frames in the canvas
-
+        #display the meanRegImg frames in the canvas
+        self.display_regFrame()
+    
+    def display_regFrame(self):
+        #visual the corrMatrix in the 512*256 canvas
+        fig = plt.figure(figsize=(512/100,512/100),dpi=100)  
+        
+        #show the meanRegImg in the canvas
+        plt.imshow(self.meanRegImg, cmap='gray')
+        plt.axis('off')
+        
+        # read the rotation center from the circlecenter txt file
+        circlecenterfilename = self.appfolder + "/circlecenter.txt"
+        with open(circlecenterfilename, "r") as f:
+            # read the last row
+            last_line = f.readlines()[-1]
+            # assign the x and y coordinates to self.rotx and self.roty
+            rotx = float(last_line.split()[0])
+            roty = float(last_line.split()[1])
+        
+        fig.savefig(self.appfolder + "/meanReg.png")
+        
+        #convert the png file to a tk image and display it in the canvas
+        self.meanRegImg_tk = ImageTk.PhotoImage(Image.open(self.appfolder + "/meanReg.png")) 
+        self.canvas_reg.create_image(rotx, roty, anchor="center", image=self.meanRegImg_tk)       
+        
     def correlationanalysis(self):
         self.app.log_message("Perform Correlation Analysis...")
         #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
@@ -113,9 +147,9 @@ class ZdriftProcessor(tk.Frame):
         self.corrMatrix = corrMatrix
         
         #display the corrMatrix in the canvas
-        self.display_processed_images()
+        self.display_corrMatrix()
         
-    def display_processed_images(self):
+    def display_corrMatrix(self):
         
         #visual the corrMatrix in the 512*256 canvas
         fig = plt.figure(figsize=(512/100,256/100),dpi=100)
@@ -162,7 +196,7 @@ class ZdriftProcessor(tk.Frame):
         
         #convert the png file to a tk image and display it in the canvas
         self.corrMatrix_tk = ImageTk.PhotoImage(Image.open(self.appfolder + "/corrMatrix.png")) 
-        self.canvas.create_image(0, 0, anchor="nw", image=self.corrMatrix_tk)
+        self.canvas_corr.create_image(0, 0, anchor="nw", image=self.corrMatrix_tk)
 
         #log the shift amount
         self.app.log_message("Z-drift shift amount: {}".format(shiftamount))

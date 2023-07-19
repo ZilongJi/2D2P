@@ -117,6 +117,7 @@ def getMeanTiff_equalsampling(S, numBins):
     
     return meanframe
     
+
 def getFramesandTimeStamps(tiffpath):
     """
     #get the acquisition time of each frame in the tiff file using tifffile
@@ -214,20 +215,12 @@ def getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles):
 def UnrotateFrame_SITiffIO(S, rotCenter, numFrames=None): 
     """
     Unrotate each frame with the corresponding rotation angle and the rotation center
-    using SITiffIO
 
     Args:
         tiffpath (_type_): _description_
         relogfile (_type_): _description_
         rotCenter (list, optional): _description_. Defaults to [256,256].
     """
-    '''
-    #read the tiff file using SITiffIO
-    S = SITiffIO()
-    S.open_tiff_file(tiffpath, "r")
-    S.open_rotary_file(relogfile)
-    S.interp_times()  # might take a while...
-    '''
     N = S.get_n_frames() #number of frames
     
     RotAngles = S.get_all_theta() #all rotation angles
