@@ -8,6 +8,8 @@ from matplotlib.gridspec import GridSpec
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
+
+from scanimagetiffio.scanimagetiffio import SITiffIO
 from utils_image import UnrotateFrame_SITiffIO
 
 class ZdriftProcessor(tk.Frame):
@@ -73,10 +75,20 @@ class ZdriftProcessor(tk.Frame):
             # assign the x and y coordinates to self.rotx and self.roty
             self.rotx = float(last_line.split()[0])
             self.roty = float(last_line.split()[1])
-            
+        
+        S = SITiffIO()
+        S.open_tiff_file(self.tifffilename, "r")
+        tailtiffname = self.folder+'/tail.tif'
+        S.save_tail(1000, tailtiffname) #save the last 1000 frames to a new tiff file
+
+        #load the new tiff file together with the rotary data
+        S.open_tiff_file(tailtiffname, "r") 
+        S.open_rotary_file(self.relogfilename)
+        S.interp_times()  # might take a while...
+           
         # unrotate each frame in the tiff file with the detected rotation center
         unrotFrames = UnrotateFrame_SITiffIO(
-            self.tifffilename, self.relogfilename, rotCenter=[self.rotx, self.roty], numFrames=int(self.numFrames.get())
+            S, rotCenter=[self.rotx, self.roty], numFrames=int(self.numFrames.get())
         )
 
         self.unrotFrames = np.array(unrotFrames)
