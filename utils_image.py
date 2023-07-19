@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import tifffile
 from datetime import datetime, timedelta
-from tqdm import tqdm
+import suite2p
+from suite2p.registration import register
+
 from scanimagetiffio.scanimagetiffio import SITiffIO
 
 def getMeanTiff_randomsampling(S, frac=0.1):
@@ -115,8 +117,6 @@ def getMeanTiff_equalsampling(S, numBins):
     
     return meanframe
     
-    
-
 def getFramesandTimeStamps(tiffpath):
     """
     #get the acquisition time of each frame in the tiff file using tifffile
@@ -318,6 +318,30 @@ def cropLargestRecT(img, cropcenter):
     upper = centerV-maxHalfSize; lower = centerV+maxHalfSize
     cropImg = img.crop((left, upper, right, lower))
     return cropImg
+
+def RegFrame(frames):
+    '''
+    Perform image registration on the frames
+    Input:
+        frames: a list of frames
+    Output:
+        mean_img: the mean image of the registered frames
+    '''
+    
+    # prepare configurations using the ops dictionary (need to be add to the GUI later)
+    ops = suite2p.default_ops()
+    ops['batch_size'] = 200 # we will decrease the batch_size in case low RAM on computer
+    ops['block_size'] = [64,64]
+    ops['fs'] = 30 # sampling rate of recording, determines binning for cell detection
+    ops['tau'] = 0.7 # timescale of gcamp to use for deconvolution
+
+    #perform image registration with built-in suite2p function
+    regframes = np.zeros_like(frames)
+    output = register.compute_reference_and_register_frames(frames, f_align_out=regframes, refImg=None, ops=ops)
+    
+    refImg, rmin, rmax, mean_img, rigid_offsets, nonrigid_offsets, zest = output
+    
+    return mean_img
 
 #%%
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 
 from scanimagetiffio.scanimagetiffio import SITiffIO
-from utils_image import UnrotateFrame_SITiffIO
+from utils_image import UnrotateFrame_SITiffIO, RegFrame
 
 class ZdriftProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, appfolder=None, app=None):
@@ -39,7 +39,7 @@ class ZdriftProcessor(tk.Frame):
         tk.Entry(self, textvariable=self.numFrames).grid(row=3, column=0)
         
         #create a button to unrottate the tiff
-        tk.Button(self, text="Unrotate Tiff", command=self.unrotatetiff).grid(row=0, column=1)
+        tk.Button(self, text="Unrotate Tiff", command=self.unrotregtiff).grid(row=0, column=1)
 
         #create a button to do correlation analysis
         tk.Button(self, text="Correlation Analysis", command=self.correlationanalysis).grid(row=1, column=1)
@@ -64,8 +64,8 @@ class ZdriftProcessor(tk.Frame):
         )
         self.app.log_message("Imported RElog file: {}".format(self.relogfilename))
         
-    def unrotatetiff(self):
-        self.app.log_message("Unrotate tiff file...")
+    def unrotregtiff(self):
+        self.app.log_message("Unrotate tiff file and perform image registration...")
         
         # read the rotation center from the circlecenter txt file
         circlecenterfilename = self.appfolder + "/circlecenter.txt"
@@ -79,21 +79,22 @@ class ZdriftProcessor(tk.Frame):
         S = SITiffIO()
         S.open_tiff_file(self.tifffilename, "r")
         tailtiffname = self.folder+'/tail.tif'
-        S.save_tail(1000, tailtiffname) #save the last 1000 frames to a new tiff file
+        S.save_tail(1000, tailtiffname) #save the last 1000 frames to a tail tiff file
 
-        #load the new tiff file together with the rotary data
+        #load the tail tiff file together with the rotary data
         S.open_tiff_file(tailtiffname, "r") 
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
            
         # unrotate each frame in the tiff file with the detected rotation center
-        unrotFrames = UnrotateFrame_SITiffIO(
+        self.unrotFrames  = UnrotateFrame_SITiffIO(
             S, rotCenter=[self.rotx, self.roty], numFrames=int(self.numFrames.get())
         )
 
-        self.unrotFrames = np.array(unrotFrames)
+        self.app.log_message("Unrotation and registration finished...")
         
-        self.app.log_message("Unrotation finished...")
+        #perform image registraion
+        meanRegImg = RegFrame(self.unrotFrames)
         
         #display the unrotated frames in the canvas
 
