@@ -211,9 +211,9 @@ def getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles):
     
     return RotAngles
 
-def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256], numFrames=None): 
+def UnrotateFrame_SITiffIO(S, rotCenter, numFrames=None): 
     """
-    Unrotate each frame with the corresponding rotation angle, as well as a rotation center
+    Unrotate each frame with the corresponding rotation angle and the rotation center
     using SITiffIO
 
     Args:
@@ -221,25 +221,34 @@ def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256], numFrames=N
         relogfile (_type_): _description_
         rotCenter (list, optional): _description_. Defaults to [256,256].
     """
-    
+    '''
     #read the tiff file using SITiffIO
     S = SITiffIO()
     S.open_tiff_file(tiffpath, "r")
     S.open_rotary_file(relogfile)
     S.interp_times()  # might take a while...
-    
+    '''
     N = S.get_n_frames() #number of frames
+    
     RotAngles = S.get_all_theta() #all rotation angles
     
     #if numFrames is None rotate all frames, else rotate the last numFrames frames
     if numFrames is None:
         frameInds = np.arange(N)
     else:
-        frameInds = np.arange(N-numFrames, N)
+        #raise an error in numFrames>N
+        if numFrames > N:
+            raise ValueError("numFrames should be smaller than the total number of frames")
+        else:
+            frameInds = np.arange(N-numFrames, N)
     
     #for each frame, unrotate it with the corresponding rotation angle using Image.rotate
-    #and store in a list
+    #and store in an array
     UnrotatedFrames = []
+    
+    #store unrotated frames in a tiff file
+    #S.open_tiff_file(savepath, 'w')
+    
     for i in frameInds:
         frame = S.get_frame(i+1)
         #unrotate the frame
@@ -248,7 +257,13 @@ def UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256], numFrames=N
         unrotatedFrame = cropLargestRecT(unrotatedFrame, rotCenter)
         #convert the PIL image back to int16
         unrotatedFrame = np.array(unrotatedFrame, dtype=np.int16)
-        UnrotatedFrames.append(unrotatedFrame)       
+        UnrotatedFrames.append(unrotatedFrame)   
+        
+        #save the unrotated frame to tiff file
+        #S.write_frame(unrotatedFrame, i+1)      
+        
+    #convert the list to UnrotatedFrames to array
+    UnrotatedFrames = np.array(UnrotatedFrames)
     
     return UnrotatedFrames
     
