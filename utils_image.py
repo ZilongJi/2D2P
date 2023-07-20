@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import suite2p
 from suite2p.registration import register
 
-from scanimagetiffio.scanimagetiffio import SITiffIO
+from scanimagetiffio import SITiffIO
 
 def getMeanTiff_randomsampling(S, frac=0.1):
     """

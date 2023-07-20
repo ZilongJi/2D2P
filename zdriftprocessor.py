@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 
-from scanimagetiffio.scanimagetiffio import SITiffIO
+from scanimagetiffio import SITiffIO
 from utils_image import UnrotateFrame_SITiffIO, RegFrame
 
 class ZdriftProcessor(tk.Frame):

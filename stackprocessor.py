@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 from utils_image import UnrotateFrame_SITiffIO
-from scanimagetiffio.scanimagetiffio import SITiffIO
+from scanimagetiffio import SITiffIO
 
 class StackProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
