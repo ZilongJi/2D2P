@@ -9,22 +9,15 @@ class TwoDTWoP(tk.Tk):
         super().__init__()
         self.folder = folder
 
-        # create a folder called APP under self.folder to save results 
-        # if the folder already exists, delete it and create a new one
-        self.appfolder = self.folder + "/APP"
-        if os.path.exists(self.appfolder):
-            os.system("rm -rf " + self.appfolder)
-        os.mkdir(self.appfolder)
-
         self.create_widgets()
         
         # create a log window
         self.create_log_window()
 
     def create_widgets(self):
-        self.center_processor = CenterDetector(self, self.folder, self.appfolder, app=self)
-        self.stack_processor = StackProcessor(self, self.folder, self.appfolder, app=self)
-        self.zdrift_processor = ZdriftProcessor(self, self.folder, self.appfolder, app=self)
+        self.center_processor = CenterDetector(self, self.folder, app=self)
+        self.stack_processor = StackProcessor(self, self.folder, app=self)
+        self.zdrift_processor = ZdriftProcessor(self, self.folder, app=self)
 
         # Place the three classes into the main window using the grid manager
         self.center_processor.grid(row=0, column=0)

@@ -19,11 +19,10 @@ from scanimagetiffio.scanimagetiffio import SITiffIO
 from utils_image import getMeanTiff_randomsampling, getMeanTiff_equalsampling
 
 class CenterDetector(tk.Frame):
-    def __init__(self, master=None, folder=None, appfolder=None, app=None):
+    def __init__(self, master=None, folder=None, app=None):
         super().__init__(master)
         self.master = master
         self.folder = folder
-        self.appfolder = appfolder
         self.app = app
         self.grid()
 
@@ -71,8 +70,22 @@ class CenterDetector(tk.Frame):
             title="Select file",
             filetypes=(("tiff files", "*.tif"), ("all files", "*.*")),
         )
-        # log the message in the text widget
-        self.app.log_message("Imported tiff file: " + self.tifffilename)
+        if self.app is not None:
+            # log the message in the text widget
+            self.app.log_message("Imported tiff file: " + self.tifffilename)
+
+        #create a 2D2P folder under the folder of the tiff file
+        #if the folder already exists, delete it and create a new one
+        self.DPfolder = os.path.dirname(self.tifffilename) + "/DP"
+        if os.path.exists(self.DPfolder):
+            os.system("rm -rf " + self.DPfolder)
+        os.mkdir(self.DPfolder)
+        
+        # create a txt file called circlecenter.txt under self.DPfolder
+        # to save the position of the circle center
+        self.circlecenterfile = self.DPfolder + "/circlecenter.txt"
+        with open(self.circlecenterfile, "w") as f:
+            f.write("")
 
     def import_RElog(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as txt and all files
@@ -81,21 +94,27 @@ class CenterDetector(tk.Frame):
             title="Select file",
             filetypes=(("txt files", "*.txt"), ("all files", "*.*")),
         )
-        # log the message in the text widget
-        self.app.log_message("Imported RElog file: " + self.relogfilename)
+        
+        if self.app is not None:
+            # log the message in the text widget
+            self.app.log_message("Imported RElog file: " + self.relogfilename)
 
     def averagetif(self):
         # read the tiff file via SITiffIO
-        self.app.log_message("Reading tiff file...")
+        if self.app is not None:
+            self.app.log_message("Reading tiff file...")
+            
         S = SITiffIO()
         S.open_tiff_file(self.tifffilename, "r")
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
         self.S = S
-        self.app.log_message(
-            "Counted " + str(S.get_n_frames()) + " frames in the tif file."
-        )
-        self.app.log_message("Done reading tiff file.")
+        
+        if self.app is not None:
+            self.app.log_message(
+                "Counted " + str(S.get_n_frames()) + " frames in the tif file."
+            )
+            self.app.log_message("Done reading tiff file.")
 
         try:
             # change string to float
@@ -104,17 +123,20 @@ class CenterDetector(tk.Frame):
             #if fracorBins is smaller than 1, it is a fraction then use getMeanTiff_randomsampling
             #other wise it is a number of bins then use getMeanTiff_equalsampling
             if fracorBins < 1:
-                self.app.log_message("Get the averaged image by random sampling...")
+                if self.app is not None:
+                    self.app.log_message("Get the averaged image by random sampling...")
                 self.meantif = getMeanTiff_randomsampling(self.S, frac=fracorBins)
             else:   
-                self.app.log_message("Get the averaged image by equal sampling...")
+                if self.app is not None:
+                    self.app.log_message("Get the averaged image by equal sampling...")
                 self.meantif = getMeanTiff_equalsampling(self.S, numBins=int(fracorBins))
             
             # display the averaged image on the canvas
             self.display_image(self.meantif)
             
         except ValueError:
-            self.app.log_message("Error! Please enter a valid fraction number.")
+            if self.app is not None:
+                self.app.log_message("Error! Please enter a valid fraction number.")
 
         # display the polar plot of all the angle in the rotary encoder file
         self.angles = S.get_all_theta()
@@ -122,7 +144,7 @@ class CenterDetector(tk.Frame):
         
     def display_angles(self, angles):
         #perform a polar plot of all the angles and display it on the canvas
-        #save the polar plot as a png file under self.appfolder
+        #save the polar plot as a png file under self.DPfolder
         angles = np.array(angles)
         #do a polar plot of theb histogram of the angles
         #set figure size as 256 *256 pixels
@@ -136,11 +158,11 @@ class CenterDetector(tk.Frame):
         #plot the histogram
         ax.hist(np.radians(angles), bins=50, density=False)
         
-        fig.savefig(self.appfolder + "/angle_distribution.png", dpi=100)
+        fig.savefig(self.DPfolder + "/angle_distribution.png", dpi=100)
         plt.close(fig)
         
         #display the polar plot on the canvas on the center of the 512*256 canvas
-        self.img_ang = Image.open(self.appfolder + "/angle_distribution.png")
+        self.img_ang = Image.open(self.DPfolder + "/angle_distribution.png")
         self.imgTK_ang  = ImageTk.PhotoImage(self.img_ang)
         self.canvas4angle.create_image(256, 128, image=self.imgTK_ang, anchor="center")
         
@@ -153,23 +175,16 @@ class CenterDetector(tk.Frame):
         self.imgTK = ImageTk.PhotoImage(self.img)
         self.canvas.create_image(0, 0, image=self.imgTK, anchor="nw")
 
-        # save the image as a png file under self.appfolder
-        self.img.save(self.appfolder + "/averagedTiff.png")
+        # save the image as a png file under self.DPfolder
+        self.img.save(self.DPfolder + "/averagedTiff.png")
 
         # Enabling circle drawing on the image.
         self.canvas.bind("<Button-1>", self.draw_circle)
 
     def draw_circle(self, event):
-        # create a txt file called circlecenter.txt under self.appfolder
-        # to save the position of the circle center
-        # if the txt file already exists, delete it and create a new one
-        self.circlecenterfile = self.appfolder + "/circlecenter.txt"
-        if os.path.exists(self.circlecenterfile):
-            os.remove(self.circlecenterfile)
-        with open(self.circlecenterfile, "w") as f:
-            f.write("")
-
-        self.app.log_message("Draw a circle on the image...")
+        
+        if self.app is not None:
+            self.app.log_message("Draw a circle on the image...")
         # draw a circle on the image whose center is the position of the left mouse click
         # the size of the circle can be changed by moving the mouse
         # the position of the circle can be changed by pressing up down left right key
@@ -254,9 +269,10 @@ class CenterDetector(tk.Frame):
         self.spaceclicks += 1  # count the number of space clicks
 
         # display the position of the circle center on the text widget
-        self.app.log_message(
-            "Center position of the drawed circle:" + str(self.x) + " " + str(self.y)
-        )
+        if self.app is not None:
+            self.app.log_message(
+                "Center position of the drawed circle:" + str(self.x) + " " + str(self.y)
+            )
 
         # updating the position of the circle center on the image
         self.circlecenter = (1 - 1 / self.spaceclicks) * self.circlecenter + (
@@ -265,14 +281,16 @@ class CenterDetector(tk.Frame):
         # keep 1 decimal places
         self.circlecenter = np.round(self.circlecenter, 0)
 
-        # log the number of space clicks and the position of the circle center
-        
-        self.app.log_message("Number of space clicks:" + str(self.spaceclicks))
-        self.app.log_message("Updated center position:" + str(self.circlecenter))    
+        if self.app is not None:
+            # log the number of space clicks and the position of the circle center
+            self.app.log_message("Number of space clicks:" + str(self.spaceclicks))
+            self.app.log_message("Updated center position:" + str(self.circlecenter))    
 
         # save the position to the created txt file without overwriting previous position
         with open(self.circlecenterfile, "a") as f:
-            f.write(str(self.x) + " " + str(self.y) + "\n")
+            x = self.circlecenter[0]
+            y = self.circlecenter[1]
+            f.write(str(x) + " " + str(y) + "\n")
 
 
 # main
@@ -280,8 +298,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = CenterDetector(
         master=root,
-        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
-        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data"
     )
     app.mainloop()
     

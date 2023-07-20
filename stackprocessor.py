@@ -5,19 +5,19 @@
 # I also want to create a canvas that will allow me to display each of the frames
 # in the processed stack file, by click the up and down arrows,
 # I can display different frames in the stack file
+import os
 import numpy as np
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 from utils_image import UnrotateFrame_SITiffIO
-
+from scanimagetiffio.scanimagetiffio import SITiffIO
 
 class StackProcessor(tk.Frame):
-    def __init__(self, master=None, folder=None, appfolder=None, app=None):
+    def __init__(self, master=None, folder=None, app=None):
         super().__init__(master)
         self.master = master
         self.folder = folder
-        self.appfolder = appfolder
         self.app = app
         self.grid()
 
@@ -68,8 +68,11 @@ class StackProcessor(tk.Frame):
             title="Select file",
             filetypes=(("tiff files", "*.tif"), ("all files", "*.*")),
         )
-        # log the message in the text widget
-        self.app.log_message("Imported tiff file: " + self.tifffilename)
+        if self.app is not None:
+            # log the message in the text widget
+            self.app.log_message("Imported tiff file: " + self.tifffilename)
+
+        self.DPfolder = os.path.dirname(self.tifffilename) + "/DP"
 
     def import_RElog(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as txt and all files
@@ -78,24 +81,34 @@ class StackProcessor(tk.Frame):
             title="Select file",
             filetypes=(("txt files", "*.txt"), ("all files", "*.*")),
         )
-        # log the message in the text widget
-        self.app.log_message("Imported RElog file: " + self.relogfilename)
+        
+        if self.app is not None:        
+            # log the message in the text widget
+            self.app.log_message("Imported RElog file: " + self.relogfilename)
 
     def unrotatezstack(self):
-        self.app.log_message("Unrotate tiff file...")
+        if self.app is not None:
+            self.app.log_message("Unrotate tiff file...")
 
         # read the rotation center from the circlecenter txt file
-        circlecenterfilename = self.appfolder + "/circlecenter.txt"
+        circlecenterfilename = self.DPfolder + "/circlecenter.txt"
         with open(circlecenterfilename, "r") as f:
             # read the last row
             last_line = f.readlines()[-1]
             # assign the x and y coordinates to self.rotx and self.roty
             self.rotx = float(last_line.split()[0])
             self.roty = float(last_line.split()[1])
+            
+        S = SITiffIO()
+        S.open_tiff_file(self.tifffilename, "r")
+        #load the tiff file together with the rotary data
+        S.open_tiff_file(self.tifffilename, "r") 
+        S.open_rotary_file(self.relogfilename)
+        S.interp_times()  # might take a while...
 
         # unrotate each frame in the tiff file with the detected rotation center
         unrotFrames = UnrotateFrame_SITiffIO(
-            self.tifffilename, self.relogfilename, rotCenter=[self.rotx, self.roty], numFrames=None
+            S, rotCenter=[self.rotx, self.roty], numFrames=None
         )
 
         # reshape rnrotFrames which is a list to a 5D array with shape (volumes, stacks, frames, width, height)
@@ -106,9 +119,10 @@ class StackProcessor(tk.Frame):
             num_s = int(self.stacks.get())
             num_f = int(self.frames.get())
         except ValueError:
-            self.app.log_message(
-                "Error! Please enter the number of volumes, stacks and frames"
-            )
+            if self.app is not None:
+                self.app.log_message(
+                    "Error! Enter the number of volumes, stacks and frames"
+                )
             return
 
         # reshape the unrotFrames to a 5D array
@@ -117,9 +131,13 @@ class StackProcessor(tk.Frame):
         )
         # average across the first and third dimension
         self.meanStacks = np.mean(unrotFrames, axis=(0, 2))
-        self.app.log_message("Unrotation finished...")
+        
         #save the unrotated stacks as a npy file in the app folder
-        np.save(self.appfolder + "/meanstacks.npy", self.meanStacks)
+        np.save(self.DPfolder + "/meanstacks.npy", self.meanStacks)
+        
+        if self.app is not None:
+            self.app.log_message("Unrotation finished...")
+
 
         # display
         self.display_processed_images()
@@ -164,7 +182,6 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = StackProcessor(
         master=root,
-        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
-        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data/162"
     )
     app.mainloop()

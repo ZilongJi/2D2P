@@ -2,6 +2,7 @@
 # After import these files, I want to create a widget that allows me to unrotate each frame according to information in the log files
 # and then crop the unrotated frames as in stackprocessor.py
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -13,11 +14,10 @@ from scanimagetiffio.scanimagetiffio import SITiffIO
 from utils_image import UnrotateFrame_SITiffIO, RegFrame
 
 class ZdriftProcessor(tk.Frame):
-    def __init__(self, master=None, folder=None, appfolder=None, app=None):
+    def __init__(self, master=None, folder=None, app=None):
         super().__init__(master)
         self.master = master
         self.folder = folder
-        self.appfolder = appfolder
         self.app = app
         self.grid()
         
@@ -69,6 +69,8 @@ class ZdriftProcessor(tk.Frame):
         )
         self.app.log_message("Imported tiff file: {}".format(self.tifffilename))
         
+        self.DPfolder = os.path.dirname(self.tifffilename) + "/DP"
+        
     def import_RElog(self):
         # import RElog file
         self.relogfilename = filedialog.askopenfilename(
@@ -80,7 +82,7 @@ class ZdriftProcessor(tk.Frame):
         self.app.log_message("Unrotate tiff file and perform image registration...")
         
         # read the rotation center from the circlecenter txt file
-        circlecenterfilename = self.appfolder + "/circlecenter.txt"
+        circlecenterfilename = self.DPFolder + "/circlecenter.txt"
         with open(circlecenterfilename, "r") as f:
             # read the last row
             last_line = f.readlines()[-1]
@@ -118,7 +120,7 @@ class ZdriftProcessor(tk.Frame):
         plt.axis('off')
         
         # read the rotation center from the circlecenter txt file
-        circlecenterfilename = self.appfolder + "/circlecenter.txt"
+        circlecenterfilename = self.DPFolder + "/circlecenter.txt"
         with open(circlecenterfilename, "r") as f:
             # read the last row
             last_line = f.readlines()[-1]
@@ -126,16 +128,16 @@ class ZdriftProcessor(tk.Frame):
             rotx = float(last_line.split()[0])
             roty = float(last_line.split()[1])
         
-        fig.savefig(self.appfolder + "/meanReg.png")
+        fig.savefig(self.DPFolder + "/meanReg.png")
         
         #convert the png file to a tk image and display it in the canvas
-        self.meanRegImg_tk = ImageTk.PhotoImage(Image.open(self.appfolder + "/meanReg.png")) 
+        self.meanRegImg_tk = ImageTk.PhotoImage(Image.open(self.DPFolder + "/meanReg.png")) 
         self.canvas_reg.create_image(rotx, roty, anchor="center", image=self.meanRegImg_tk)       
         
     def correlationanalysis(self):
         self.app.log_message("Perform Correlation Analysis...")
         #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
-        meanstacks = np.load(self.appfolder + "/meanstacks.npy")
+        meanstacks = np.load(self.DPFolder + "/meanstacks.npy")
         
         #corrleting each frame in self.unrotFrames with meanstacks
         #and add the correlation value to a matrix called corrMatrix
@@ -192,10 +194,10 @@ class ZdriftProcessor(tk.Frame):
         plt.tight_layout()
         # Remove the some empty space between the subplots
         plt.subplots_adjust(wspace=0.2)
-        fig.savefig(self.appfolder + "/corrMatrix.png")
+        fig.savefig(self.DPFolder + "/corrMatrix.png")
         
         #convert the png file to a tk image and display it in the canvas
-        self.corrMatrix_tk = ImageTk.PhotoImage(Image.open(self.appfolder + "/corrMatrix.png")) 
+        self.corrMatrix_tk = ImageTk.PhotoImage(Image.open(self.DPFolder + "/corrMatrix.png")) 
         self.canvas_corr.create_image(0, 0, anchor="nw", image=self.corrMatrix_tk)
 
         #log the shift amount
@@ -210,8 +212,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = ZdriftProcessor(
         master=root,
-        folder="/home/zilong/Desktop/2D2P/Data/162_10072023",
-        appfolder="/home/zilong/Desktop/2D2P/Data/162_10072023/APP",
+        folder="/home/zilong/Desktop/2D2P/Data",
     )
     app.mainloop()
 
