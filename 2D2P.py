@@ -15,7 +15,9 @@ class TwoDTWoP(tk.Tk):
         self.create_log_window()
 
     def create_widgets(self):
+        
         self.center_processor = CenterDetector(self, self.folder, app=self)
+        
         self.stack_processor = StackProcessor(self, self.folder, app=self)
         self.zdrift_processor = ZdriftProcessor(self, self.folder, app=self)
 

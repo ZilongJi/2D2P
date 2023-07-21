@@ -11,7 +11,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 
 from scanimagetiffio import SITiffIO
-from utils_image import UnrotateFrame_SITiffIO, RegFrame
+from utils_image import UnrotateCropFrame, RegFrame
 
 class ZdriftProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
@@ -67,19 +67,22 @@ class ZdriftProcessor(tk.Frame):
         self.tifffilename = filedialog.askopenfilename(
             initialdir=self.folder, title="Select a tiff file", filetypes=[("tiff files", "*.tif")]
         )
-        self.app.log_message("Imported tiff file: {}".format(self.tifffilename))
+        if self.app is not None:
+            self.app.log_message("Imported tiff file: {}".format(self.tifffilename))
         
-        self.DPfolder = os.path.dirname(self.tifffilename) + "/DP"
+        self.DPFolder = os.path.dirname(self.tifffilename) + "/DP"
         
     def import_RElog(self):
         # import RElog file
         self.relogfilename = filedialog.askopenfilename(
             initialdir=self.folder, title="Select a RElog file", filetypes=[("txt files", "*.txt")]
         )
-        self.app.log_message("Imported RElog file: {}".format(self.relogfilename))
+        if self.app is not None:
+            self.app.log_message("Imported RElog file: {}".format(self.relogfilename))
         
     def unrotregtiff(self):
-        self.app.log_message("Unrotate tiff file and perform image registration...")
+        if self.app is not None:
+            self.app.log_message("Unrotate tiff file and perform image registration...")
         
         # read the rotation center from the circlecenter txt file
         circlecenterfilename = self.DPFolder + "/circlecenter.txt"
@@ -92,21 +95,15 @@ class ZdriftProcessor(tk.Frame):
         
         S = SITiffIO()
         S.open_tiff_file(self.tifffilename, "r")
-        tailtiffname = self.folder+'/tail.tif'
-        S.save_tail(int(self.numFrames.get()), tailtiffname) #save the last 1000 frames to a tail tiff file
-
-        #load the tail tiff file together with the rotary data
-        S.open_tiff_file(tailtiffname, "r") 
         S.open_rotary_file(self.relogfilename)
-        S.interp_times()  # might take a while...
-           
+        #extract the last self.numFrames frames from the tiff file
+        tailArray, tailAng = S.tail(int(self.numFrames.get()))
+               
         # unrotate each frame in the tiff file with the detected rotation center
-        self.unrotFrames  = UnrotateFrame_SITiffIO(S, rotCenter=[self.rotx, self.roty], numFrames=None)
-
-        self.app.log_message("Unrotation and registration finished...")
+        self.unrotFrames  = UnrotateCropFrame(tailArray, tailAng, rotCenter=[self.rotx, self.roty])
         
         #perform image registraion
-        self.meanRegImg = RegFrame(self.unrotFrames)
+        self.meanRegImg, self.regFrames = RegFrame(self.unrotFrames)
         
         #display the meanRegImg frames in the canvas
         self.display_regFrame()
@@ -135,16 +132,17 @@ class ZdriftProcessor(tk.Frame):
         self.canvas_reg.create_image(rotx, roty, anchor="center", image=self.meanRegImg_tk)       
         
     def correlationanalysis(self):
-        self.app.log_message("Perform Correlation Analysis...")
+        if self.app is not None:
+            self.app.log_message("Perform Correlation Analysis...")
         #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
         meanstacks = np.load(self.DPFolder + "/meanstacks.npy")
         
         #corrleting each frame in self.unrotFrames with meanstacks
         #and add the correlation value to a matrix called corrMatrix
-        corrMatrix = np.zeros((self.unrotFrames.shape[0], meanstacks.shape[0]))
-        for i in range(self.unrotFrames.shape[0]):
+        corrMatrix = np.zeros((self.regFrames.shape[0], meanstacks.shape[0]))
+        for i in range(self.regFrames.shape[0]):
             for j in range(meanstacks.shape[0]):
-                corrMatrix[i,j] = np.corrcoef(self.unrotFrames[i,:,:].flatten(), meanstacks[j,:,:].flatten())[0,1]
+                corrMatrix[i,j] = np.corrcoef(self.regFrames[i,:,:].flatten(), meanstacks[j,:,:].flatten())[0,1]
         
         self.corrMatrix = corrMatrix
         
@@ -200,12 +198,12 @@ class ZdriftProcessor(tk.Frame):
         self.corrMatrix_tk = ImageTk.PhotoImage(Image.open(self.DPFolder + "/corrMatrix.png")) 
         self.canvas_corr.create_image(0, 0, anchor="nw", image=self.corrMatrix_tk)
 
-        #log the shift amount
-        self.app.log_message("Z-drift shift amount: {}".format(shiftamount))
-        if shiftamount < 0:
-            self.app.log_message("Move zforcus {} micrometers down".format(-shiftamount))
-        else:
-            self.app.log_message("Move zforcus {} micrometers up".format(shiftamount))   
+        if self.app is not None:
+            #log the shift amount
+            if shiftamount < 0:
+                self.app.log_message("Move zforcus {} micrometers down".format(-shiftamount))
+            else:
+                self.app.log_message("Move zforcus {} micrometers up".format(shiftamount))   
 
     
 if __name__ == "__main__":

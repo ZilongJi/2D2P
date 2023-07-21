@@ -212,53 +212,35 @@ def getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles):
     
     return RotAngles
 
-def UnrotateFrame_SITiffIO(S, rotCenter, numFrames=None): 
+def UnrotateCropFrame(Array, Angle, rotCenter): 
     """
-    Unrotate each frame with the corresponding rotation angle and the rotation center
+    Unrotate each frame with the corresponding rotation angle and the rotation center 
+    and crop the largest inner rectangle from the unrotated frame
 
     Args:
-        tiffpath (_type_): _description_
-        relogfile (_type_): _description_
-        rotCenter (list, optional): _description_. Defaults to [256,256].
+        Array (array): a 3D array of frames
+        Angle (list): a list of rotation angles
+        rotCenter (list): the rotation center from the center detection module
     """
-    N = S.get_n_frames() #number of frames
-    
-    RotAngles = S.get_all_theta() #all rotation angles
-    
-    #if numFrames is None rotate all frames, else rotate the last numFrames frames
-    if numFrames is None:
-        frameInds = np.arange(N)
-    else:
-        #raise an error in numFrames>N
-        if numFrames > N:
-            raise ValueError("numFrames should be smaller than the total number of frames")
-        else:
-            frameInds = np.arange(N-numFrames, N)
     
     #for each frame, unrotate it with the corresponding rotation angle using Image.rotate
     #and store in an array
-    UnrotatedFrames = []
+    NewFrames = []
     
-    #store unrotated frames in a tiff file
-    #S.open_tiff_file(savepath, 'w')
-    
-    for i in frameInds:
-        frame = S.get_frame(i+1)
+    for i in range(Array.shape[0]):
+        frame = Array[i,:,:]
         #unrotate the frame
-        unrotatedFrame = Image.fromarray(frame).rotate(RotAngles[i], center=rotCenter)
+        unrotatedFrame = Image.fromarray(frame).rotate(Angle[i], center=rotCenter)
         #crop the largest inner rectangle from the unrotated frame
-        unrotatedFrame = cropLargestRecT(unrotatedFrame, rotCenter)
+        croppedFrame = cropLargestRecT(unrotatedFrame, rotCenter)
         #convert the PIL image back to int16
-        unrotatedFrame = np.array(unrotatedFrame, dtype=np.int16)
-        UnrotatedFrames.append(unrotatedFrame)   
-        
-        #save the unrotated frame to tiff file
-        #S.write_frame(unrotatedFrame, i+1)      
+        croppedFrame = np.array(croppedFrame, dtype=np.int16)
+        NewFrames.append(croppedFrame)      
         
     #convert the list to UnrotatedFrames to array
-    UnrotatedFrames = np.array(UnrotatedFrames)
+    NewFrames = np.array(NewFrames)
     
-    return UnrotatedFrames
+    return NewFrames
     
 def UnrotateFrame_tiffile(tiffpath, relogfile, rotCenter=[256,256]):
     """
@@ -334,7 +316,7 @@ def RegFrame(frames):
     
     refImg, rmin, rmax, mean_img, rigid_offsets, nonrigid_offsets, zest = output
     
-    return mean_img
+    return mean_img, regframes
 
 #%%
 if __name__ == "__main__":

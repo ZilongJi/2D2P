@@ -10,7 +10,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
-from utils_image import UnrotateFrame_SITiffIO
+from utils_image import UnrotateCropFrame
 from scanimagetiffio import SITiffIO
 
 class StackProcessor(tk.Frame):
@@ -72,7 +72,7 @@ class StackProcessor(tk.Frame):
             # log the message in the text widget
             self.app.log_message("Imported tiff file: " + self.tifffilename)
 
-        self.DPfolder = os.path.dirname(self.tifffilename) + "/DP"
+        self.DPFolder = os.path.dirname(self.tifffilename) + "/DP"
 
     def import_RElog(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as txt and all files
@@ -91,7 +91,7 @@ class StackProcessor(tk.Frame):
             self.app.log_message("Unrotate tiff file...")
 
         # read the rotation center from the circlecenter txt file
-        circlecenterfilename = self.DPfolder + "/circlecenter.txt"
+        circlecenterfilename = self.DPFolder + "/circlecenter.txt"
         with open(circlecenterfilename, "r") as f:
             # read the last row
             last_line = f.readlines()[-1]
@@ -105,14 +105,17 @@ class StackProcessor(tk.Frame):
         S.open_tiff_file(self.tifffilename, "r") 
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
+        #get all frames and angles in S
+        Array = []; 
+        for i in range(S.get_n_frames()):
+            Array.append(S.get_frame(i+1))
+        #change Array to a numpy array
+        Array = np.array(Array)
+        Angle = S.get_all_theta()
 
         # unrotate each frame in the tiff file with the detected rotation center
-        unrotFrames = UnrotateFrame_SITiffIO(
-            S, rotCenter=[self.rotx, self.roty], numFrames=None
-        )
-
-        # reshape rnrotFrames which is a list to a 5D array with shape (volumes, stacks, frames, width, height)
-        unrotFrames = np.array(unrotFrames)
+        unrotcropFrames = UnrotateCropFrame(Array, Angle, rotCenter=[self.rotx, self.roty])      
+        
         # get the number of volumes, stacks and frames from the user input
         try:
             num_v = int(self.volumes.get())
@@ -126,17 +129,17 @@ class StackProcessor(tk.Frame):
             return
 
         # reshape the unrotFrames to a 5D array
-        unrotFrames = unrotFrames.reshape(
-            num_v, num_s, num_f, unrotFrames.shape[1], unrotFrames.shape[2]
+        unrotcropFrames = unrotcropFrames.reshape(
+            num_v, num_s, num_f, unrotcropFrames.shape[1], unrotcropFrames.shape[2]
         )
         # average across the first and third dimension
-        self.meanStacks = np.mean(unrotFrames, axis=(0, 2))
+        self.meanStacks = np.mean(unrotcropFrames, axis=(0, 2))
         
         #save the unrotated stacks as a npy file in the app folder
-        np.save(self.DPfolder + "/meanstacks.npy", self.meanStacks)
+        np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
         
         if self.app is not None:
-            self.app.log_message("Unrotation finished...")
+            self.app.log_message("Unrotation and crop finished...")
 
 
         # display
