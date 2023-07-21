@@ -100,7 +100,6 @@ class StackProcessor(tk.Frame):
             self.roty = float(last_line.split()[1])
             
         S = SITiffIO()
-        S.open_tiff_file(self.tifffilename, "r")
         #load the tiff file together with the rotary data
         S.open_tiff_file(self.tifffilename, "r") 
         S.open_rotary_file(self.relogfilename)
