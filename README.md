@@ -23,4 +23,6 @@ Click to zoom in for details.
 
 ## Troubleshooting
 - [ ] 15/07/2023: Analysis pipeline tested. But z-drift correlation does not work. Need to add image registration to unrotated tiff.
-- [ ] 19/07/2023: Add image registration code using suite2p built-in code to denoise tiff files.
+- [ ] 19/07/2023: Add image registration code using suite2p built-in code to denoise tiff files. Galvo issue detected!
+- [ ] 24/07/2023: Add z-drift correlation code using suite2p built-in code. Galvo issue points to thermal effect
+
