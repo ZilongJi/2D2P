@@ -2,10 +2,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
+import time
 import tifffile
 from datetime import datetime, timedelta
 import suite2p
-from suite2p.registration import register
+from suite2p.registration import register, rigid
 
 from scanimagetiffio import SITiffIO
 
@@ -317,6 +318,70 @@ def RegFrame(frames):
     refImg, rmin, rmax, mean_img, rigid_offsets, nonrigid_offsets, zest = output
     
     return mean_img, regframes
+
+def compute_zpos_sp(Zstack, regFrames, ops):
+    """
+    compute z position of registrated frames gievb z-stacks, adapted from suite2p code:
+    
+    https://github.com/MouseLand/suite2p/blob/main/suite2p/registration/zalign.py
+
+    Args:
+        Zstack (3D array): size [nplanes *Ly*Lx] 
+        regFrames (3D array): size [nframes *Ly*Lx]
+        ops (dict): default_ops
+    Returns:
+        zcorr
+    """
+    
+    nbatch = 100 # number of frames to process at a time
+    nonrigid = False # set to True for nonrigid registration
+    nplanes, zLy, zLx = Zstack.shape
+    nFrames, Ly, Lx = regFrames.shape
+    
+    refAndMasks = []
+    for Z in Zstack:
+        maskMul, maskOffset = rigid.compute_masks(
+            refImg=Z,
+            maskSlope=3*ops['smooth_sigma'],
+        )
+        
+        cfRefImag = rigid.phasecorr_reference(
+            refImg=Z,
+            smooth_sigma=ops['smooth_sigma']
+        )
+        
+        cfRefImag = cfRefImag[np.newaxis, :, :]
+        
+        refAndMasks.append((maskMul, maskOffset, cfRefImag))
+    
+    zcorr = np.zeros((nplanes, nFrames), np.float32)
+    
+    t0 = time.time()
+    nfr = 0
+    while True:
+        data = np.float32(regFrames[nfr:nfr+nbatch])
+        inds = np.arange(nfr, nfr + data.shape[0], 1, int)
+        if (data.size == 0) | (nfr >= nFrames):
+            break
+        for z, ref in enumerate(refAndMasks):
+            
+            maskMul, maskOffset, cfRefImg = ref
+            cfRefImg = cfRefImg.squeeze()
+            
+            _,_,zcorr[z, inds] = rigid.phasecorr(
+                data = rigid.apply_masks(data=data, maskMul=maskMul, maskOffset=maskOffset),
+                cfRefImg = cfRefImg,
+                maxregshift = ops['maxregshift'],
+                smooth_sigma_time=ops['smooth_sigma_time'],
+            )
+            if z%10 == 1:
+                print("%d planes, %d/%d frames, %0.2f sec." %
+                      (z, nfr, nFrames, time.time() - t0))
+        
+        print("%d planes, %d/%d frames, %0.2f sec." %
+              (z, nfr, nFrames, time.time() - t0))
+        nfr += data.shape[0]
+    return zcorr
 
 #%%
 if __name__ == "__main__":

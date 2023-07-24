@@ -10,8 +10,9 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 
+import suite2p
 from scanimagetiffio import SITiffIO
-from utils_image import UnrotateCropFrame, RegFrame
+from utils_image import UnrotateCropFrame, RegFrame, compute_zpos_sp
 
 class ZdriftProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
@@ -137,6 +138,10 @@ class ZdriftProcessor(tk.Frame):
         #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
         meanstacks = np.load(self.DPFolder + "/meanstacks.npy")
         
+        ops = suite2p.default_ops()
+        self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
+        
+        '''
         #corrleting each frame in self.unrotFrames with meanstacks
         #and add the correlation value to a matrix called corrMatrix
         corrMatrix = np.zeros((self.regFrames.shape[0], meanstacks.shape[0]))
@@ -145,6 +150,7 @@ class ZdriftProcessor(tk.Frame):
                 corrMatrix[i,j] = np.corrcoef(self.regFrames[i,:,:].flatten(), meanstacks[j,:,:].flatten())[0,1]
         
         self.corrMatrix = corrMatrix
+        '''
         
         #display the corrMatrix in the canvas
         self.display_corrMatrix()
@@ -153,39 +159,41 @@ class ZdriftProcessor(tk.Frame):
         
         #visual the corrMatrix in the 512*256 canvas
         fig = plt.figure(figsize=(512/100,256/100),dpi=100)
+        
+        nplanes, nframes = self.corrMatrix.shape
 
         #plot 1 occupy 3/4 of the canvas and plot 2 occupy 1/4 of the canvas
         gs = GridSpec(1, 2, width_ratios=[3, 1])
 
         ax1 = fig.add_subplot(gs[0, 0])  
-        ax1.imshow(self.corrMatrix.T, aspect='auto',cmap='viridis')
+        ax1.imshow(self.corrMatrix, aspect='auto',cmap='gray')
         ax1.set_xlabel('Frame Number')
         ax1.set_ylabel('Stack index')
         #recenter the y label with zero representing the middle stack
-        ax1.set_yticks(np.arange(0, self.corrMatrix.shape[1], 5))    
-        ax1.set_yticklabels(np.arange(0, self.corrMatrix.shape[1], 5)-int(self.corrMatrix.shape[1]/2))
+        ax1.set_yticks(np.arange(0, nplanes, 5))    
+        ax1.set_yticklabels(np.arange(0, nplanes, 5)-int(nplanes/2))
         #add a red line to separate the two blocks
-        ax1.axhline(y=self.corrMatrix.shape[1]/2, color='r', linestyle='-')
+        ax1.axhline(y=nplanes/2, color='r', linestyle='-')
 
         #do the second plot
         ax2 = fig.add_subplot(gs[0, 1])
         #sum the correlation matrix along the frame axis
-        sumCorrMatrix = np.sum(self.corrMatrix, axis=0)
+        sumCorrMatrix = np.sum(self.corrMatrix, axis=1)
         #plot with a grey line
-        ax2.plot(sumCorrMatrix, np.arange(0, self.corrMatrix.shape[1]), color='grey')
+        ax2.plot(sumCorrMatrix, np.arange(0, nplanes), color='grey')
         ax2.set_xlabel('Sum of cc')
-        ax2.set_yticks(np.arange(0, self.corrMatrix.shape[1], 5))
+        ax2.set_yticks(np.arange(0, nplanes, 5))
         #reset y label every 5 stacks and subtratc the middle stack index
-        ax2.set_yticklabels(np.arange(0, self.corrMatrix.shape[1], 5)-int(self.corrMatrix.shape[1]/2))
+        ax2.set_yticklabels(np.arange(0, nplanes, 5)-int(nplanes/2))
         #flip y axis
         ax2.set_ylim(ax2.get_ylim()[::-1])
         #add a red line to separate the two blocks
-        ax2.axhline(y=self.corrMatrix.shape[1]/2, color='r', linestyle='-')
+        ax2.axhline(y=nplanes/2, color='r', linestyle='-')
         #find the peak of the sumCorrMatrix and plot it with a red dot
         maxIndex = np.argmax(sumCorrMatrix)
         ax2.plot(sumCorrMatrix[maxIndex], maxIndex, 'ro')
         #get the shift amount
-        shiftamount = maxIndex - int(self.corrMatrix.shape[1]/2)   
+        shiftamount = maxIndex - int(nplanes/2)   
         #add a text and the right bottom corner to show the shift amount on plot 2
         ax2.text(0.5, 0.1, 'Dft= ' + str(shiftamount), horizontalalignment='center', verticalalignment='center', transform=ax2.transAxes, color='r')
 
