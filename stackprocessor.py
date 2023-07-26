@@ -30,7 +30,7 @@ class StackProcessor(tk.Frame):
         self.frames = tk.StringVar()
 
         # initialize parameters for later use
-        self.display_index = 21
+        self.display_index = 10
 
         self.create_widgets()
         self.create_canvas()       
