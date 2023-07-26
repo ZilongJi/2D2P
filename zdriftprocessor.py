@@ -4,6 +4,7 @@
 
 import os
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import tkinter as tk
@@ -116,6 +117,9 @@ class ZdriftProcessor(tk.Frame):
         
         ops = suite2p.default_ops()
         self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
+        
+        #add Gaussian smoothing to the corrMatrix
+        
         
         #display the corrMatrix in the canvas
         self.display_corrMatrix()
