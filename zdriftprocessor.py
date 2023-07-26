@@ -28,7 +28,7 @@ class ZdriftProcessor(tk.Frame):
         self.create_widgets()
   
         self.create_canvas_reg()      
-        self.create_canvas_shift()
+        #self.create_canvas_shift()
         self.create_canvas_corr()
         
     def create_widgets(self):
@@ -42,11 +42,8 @@ class ZdriftProcessor(tk.Frame):
         tk.Label(self, text="numFrames").grid(row=2, column=0)
         tk.Entry(self, textvariable=self.numFrames).grid(row=3, column=0)
         
-        #create a button to unrottate the tiff
-        tk.Button(self, text="Unrotate Tiff", command=self.unrotregtiff).grid(row=0, column=1)
-
         #create a button to do correlation analysis
-        tk.Button(self, text="Correlation Analysis", command=self.correlationanalysis).grid(row=1, column=1)
+        tk.Button(self, text="Correlation Analysis", command=self.correlationanalysis).grid(row=0, column=1)
         
     def create_canvas_reg(self):
         # create a canvas to display registration results
@@ -81,7 +78,9 @@ class ZdriftProcessor(tk.Frame):
         if self.app is not None:
             self.app.log_message("Imported RElog file: {}".format(self.relogfilename))
         
-    def unrotregtiff(self):
+    def correlationanalysis(self):
+        
+        #1, unrotate the regFrames with the detected rotation center
         if self.app is not None:
             self.app.log_message("Unrotate tiff file and perform image registration...")
         
@@ -108,7 +107,19 @@ class ZdriftProcessor(tk.Frame):
         
         #display the meanRegImg frames in the canvas
         self.display_regFrame()
-    
+        
+        #2, perform correlation analysis
+        if self.app is not None:
+            self.app.log_message("Perform Correlation Analysis...")
+        #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
+        meanstacks = np.load(self.DPFolder + "/meanstacks.npy")
+        
+        ops = suite2p.default_ops()
+        self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
+        
+        #display the corrMatrix in the canvas
+        self.display_corrMatrix()
+ 
     def display_regFrame(self):
         #visual the corrMatrix in the 512*256 canvas
         fig = plt.figure(figsize=(512/100,512/100),dpi=100)  
@@ -131,29 +142,6 @@ class ZdriftProcessor(tk.Frame):
         #convert the png file to a tk image and display it in the canvas
         self.meanRegImg_tk = ImageTk.PhotoImage(Image.open(self.DPFolder + "/meanReg.png")) 
         self.canvas_reg.create_image(rotx, roty, anchor="center", image=self.meanRegImg_tk)       
-        
-    def correlationanalysis(self):
-        if self.app is not None:
-            self.app.log_message("Perform Correlation Analysis...")
-        #load the mean stacks 'named meanstacks.npy' in the addfolder which is a npy file
-        meanstacks = np.load(self.DPFolder + "/meanstacks.npy")
-        
-        ops = suite2p.default_ops()
-        self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
-        
-        '''
-        #corrleting each frame in self.unrotFrames with meanstacks
-        #and add the correlation value to a matrix called corrMatrix
-        corrMatrix = np.zeros((self.regFrames.shape[0], meanstacks.shape[0]))
-        for i in range(self.regFrames.shape[0]):
-            for j in range(meanstacks.shape[0]):
-                corrMatrix[i,j] = np.corrcoef(self.regFrames[i,:,:].flatten(), meanstacks[j,:,:].flatten())[0,1]
-        
-        self.corrMatrix = corrMatrix
-        '''
-        
-        #display the corrMatrix in the canvas
-        self.display_corrMatrix()
         
     def display_corrMatrix(self):
         

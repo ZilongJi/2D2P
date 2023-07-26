@@ -7,6 +7,8 @@
 # I can display different frames in the stack file
 import os
 import numpy as np
+import shutil
+import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
@@ -137,10 +139,23 @@ class StackProcessor(tk.Frame):
         #save the unrotated stacks as a npy file in the app folder
         np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
         
+        #save each stack as a png file in the app folder
+        #create a folder to save the stack png files
+        #if the folder already exists, delete it and create a new one
+        if os.path.exists(self.DPFolder + "/zstacks"):
+            shutil.rmtree(self.DPFolder + "/zstacks")
+        os.mkdir(self.DPFolder + "/zstacks")
+        #save each stack as a png file using plt
+        for i in range(self.meanStacks.shape[0]):
+            fig = plt.figure()
+            plt.imshow(self.meanStacks[i,:,:], cmap="gray")
+            plt.axis("off")
+            plt.savefig(self.DPFolder + "/zstacks/stack" + str(i+1) + ".png", bbox_inches="tight", pad_inches=0)
+            plt.close(fig)
+            
         if self.app is not None:
             self.app.log_message("Unrotation and crop finished...")
-
-
+            
         # display
         self.display_processed_images()
 

@@ -75,7 +75,7 @@ def getMeanTiff_equalsampling(S, numBins):
     #find the minimum in the list of bin counts
     #and through a warning if the minimum is less than 10
     if np.min(bin_counts) < 50:
-        print('WARNING: some bins have less than 50 elements')
+        print('WARNING: some bins have less than 50 elements, with the least is: ', np.min(bin_counts))
 
     #for each bin, randomly sample min(bin_counts) elements from the bin
     #and save all the indices in a list
