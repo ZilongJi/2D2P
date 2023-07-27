@@ -1,4 +1,4 @@
-import os
+import os #
 import tkinter as tk
 from centerdetector import CenterDetector
 from stackprocessor import StackProcessor
