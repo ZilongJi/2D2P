@@ -118,8 +118,8 @@ class ZdriftProcessor(tk.Frame):
         ops = suite2p.default_ops()
         self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
         
-        #add Gaussian smoothing to the corrMatrix
-        
+        #add Gaussian smoothing to the corrMatrix (with sigma=2, borrow from the suite2p code)
+        self.corrMatrix = gaussian_filter1d(self.corrMatrix.copy(), 2, axis=0)
         
         #display the corrMatrix in the canvas
         self.display_corrMatrix()
