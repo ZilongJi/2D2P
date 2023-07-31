@@ -329,13 +329,18 @@ def compute_zpos_sp(Zstack, regFrames, ops):
         regFrames (3D array): size [nframes *Ly*Lx]
         ops (dict): default_ops
     Returns:
-        zcorr
+        ymax (2D array): size [nplanes *nframes], the y position of the maximum correlation
+        xmax (2D array): size [nplanes *nframes], the x position of the maximum correlation
+        zcorr (2D array): size [nplanes *nframes], the maximum correlation
     """
     
-    nbatch = 100 # number of frames to process at a time
-    nonrigid = False # set to True for nonrigid registration
     nplanes, zLy, zLx = Zstack.shape
     nFrames, Ly, Lx = regFrames.shape
+    
+    if nFrames>100:
+        nbatch = 100 # number of frames to process at a time
+    else:
+        nbatch = nFrames
     
     refAndMasks = []
     for Z in Zstack:
@@ -353,6 +358,8 @@ def compute_zpos_sp(Zstack, regFrames, ops):
         
         refAndMasks.append((maskMul, maskOffset, cfRefImag))
     
+    ymax = np.zeros((nplanes, nFrames), np.int32)
+    xmax = np.zeros((nplanes, nFrames), np.int32)
     zcorr = np.zeros((nplanes, nFrames), np.float32)
     
     t0 = time.time()
@@ -367,7 +374,7 @@ def compute_zpos_sp(Zstack, regFrames, ops):
             maskMul, maskOffset, cfRefImg = ref
             cfRefImg = cfRefImg.squeeze()
             
-            _,_,zcorr[z, inds] = rigid.phasecorr(
+            ymax[z,inds],xmax[z,inds],zcorr[z, inds] = rigid.phasecorr(
                 data = rigid.apply_masks(data=data, maskMul=maskMul, maskOffset=maskOffset),
                 cfRefImg = cfRefImg,
                 maxregshift = ops['maxregshift'],
@@ -380,7 +387,7 @@ def compute_zpos_sp(Zstack, regFrames, ops):
         print("%d planes, %d/%d frames, %0.2f sec." %
               (z, nfr, nFrames, time.time() - t0))
         nfr += data.shape[0]
-    return zcorr
+    return ymax, xmax, zcorr
 
 def get_meanZstack(S, volume, stacks, frames, Rotcenter, ImgReg=False):
     """
@@ -396,6 +403,9 @@ def get_meanZstack(S, volume, stacks, frames, Rotcenter, ImgReg=False):
         meanZstack [stacks*Ly*Lx]: the mean frame of Zstack
     """
     print("Extract the mean frame of Zstacks...")
+    
+    #count the time for the function
+    t0 = time.time()
 
     Angles = S.get_all_theta()
     
@@ -441,8 +451,40 @@ def get_meanZstack(S, volume, stacks, frames, Rotcenter, ImgReg=False):
             meanImg = np.mean(temp_stack_frames, axis=0)
         
         meanZstacks[stack_i] = np.int16(meanImg)
+        
+    print("Getting the mean Z stack frames -- Done! Time used: {}".format(time.time()-t0))
     
     return meanZstacks
+
+def findFOV(zstacks, Img, maxrotangle=30):
+    '''
+    find the field of view for multi-day imaging
+    Args:
+        zstacks (3D array): size [nplanes, height, width] 
+        Img (2D array): size [height, width]
+        degreerange (list): range of rotation angle
+    Returns:
+        ymax (int): y position of the FOV
+        xmax (int): x position of the FOV
+        zcorr (float): z correlation
+    '''
+    ops = suite2p.default_ops()
+    
+    w, h = Img.shape
+    #create an empty array to store the rotated images
+    rotImgs = np.zeros((2*maxrotangle+1, w, h))
+    #all rotation angles
+    rotAngles = np.arange(-maxrotangle, maxrotangle+1, 1)
+    for i, ang in enumerate(rotAngles):
+        rotImg = Image.fromarray(Img).rotate(ang)
+        rotImg = np.array(rotImg)
+        #save
+        rotImgs[i] = rotImg
+    
+    #do phase correlation
+    ymax, xmax, zcorr = compute_zpos_sp(zstacks, rotImgs, ops)
+    
+    return ymax, xmax, zcorr
 
 #%%
 if __name__ == "__main__":
