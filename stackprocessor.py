@@ -1,10 +1,13 @@
-# I want to create a tkinter GUI class that will allow me to import a tiff file,
-# as well as a RElog file.
-# After import these files, I want to create a widget that allows me to
-# unrotate each frame according to information in the log files
-# I also want to create a canvas that will allow me to display each of the frames
-# in the processed stack file, by click the up and down arrows,
-# I can display different frames in the stack file
+# Create a tkinter GUI class that to 
+# 1: import a zstack tiff file as well as a RElog file.
+# 2: create widgets to import the number of volumes, stacks and frames
+# 3: create a button to get the mean frames for each stack 
+#     -- first unrotate each frame
+#     -- second crop each frame
+#     -- third get the mean frame for each stack
+# 4: create a canvas to display the processed stack frames
+#    -- by click the up and down arrows, display different frames in the stack file
+
 import os
 import numpy as np
 import shutil
@@ -23,8 +26,7 @@ class StackProcessor(tk.Frame):
         self.app = app
         self.grid()
 
-        # add tk.Entry widgets to allow users to enter
-        # the number of volumes, stacks and frames
+        # add tk.Entry widgets to allow users to enter the number of volumes, stacks and frames
         self.volumes = tk.StringVar()
         self.stacks = tk.StringVar()
         self.frames = tk.StringVar()
@@ -53,7 +55,7 @@ class StackProcessor(tk.Frame):
         tk.Entry(self, textvariable=self.frames).grid(row=7, column=0)
 
         # create a button to unrotate the zstacks
-        tk.Button(self, text="Unrotate ZStacks", command=self.unrotatezstack).grid(row=0, column=1)
+        tk.Button(self, text="Get mean Zstacks", command=self.getmeanzstack).grid(row=0, column=1)
 
     def create_canvas(self):
         # create a canvas to display the processed stack frames
@@ -64,7 +66,7 @@ class StackProcessor(tk.Frame):
         self.canvas.grid(row=8, column=0, columnspan=2)
 
     def import_tiff(self):
-        # filedialog: and set initialdir set as Desktop, filetypes set as tiff and all files
+        # filedialog: and set initialdir set as self.folder, filetypes set as tiff and all files
         self.tifffilename = filedialog.askopenfilename(
             initialdir=self.folder,
             title="Select file",
@@ -88,9 +90,9 @@ class StackProcessor(tk.Frame):
             # log the message in the text widget
             self.app.log_message("Imported RElog file: " + self.relogfilename)
 
-    def unrotatezstack(self):
+    def getmeanzstack(self):
         if self.app is not None:
-            self.app.log_message("Unrotate tiff file...")
+            self.app.log_message("Get mean Zstacks by unrotating and cropping each frame, and then averaging over each stack")
 
         # read the rotation center from the circlecenter txt file
         circlecenterfilename = self.DPFolder + "/circlecenter.txt"
@@ -107,18 +109,6 @@ class StackProcessor(tk.Frame):
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
         
-        '''
-        #get all frames and angles in S
-        Array = []; 
-        for i in range(S.get_n_frames()):
-            Array.append(S.get_frame(i+1))
-        #change Array to a numpy array
-        Array = np.array(Array)
-        Angle = S.get_all_theta()
-
-        # unrotate each frame in the tiff file with the detected rotation center
-        unrotcropFrames = UnrotateCropFrame(Array, Angle, rotCenter=[self.rotx, self.roty])      
-        
         # get the number of volumes, stacks and frames from the user input
         try:
             num_v = int(self.volumes.get())
@@ -130,41 +120,25 @@ class StackProcessor(tk.Frame):
                     "Error! Enter the number of volumes, stacks and frames"
                 )
             return
-
-        # reshape the unrotFrames to a 5D array
-        unrotcropFrames = unrotcropFrames.reshape(
-            num_v, num_s, num_f, unrotcropFrames.shape[1], unrotcropFrames.shape[2]
-        )
-        # average across the first and third dimension
-        self.meanStacks = np.mean(unrotcropFrames, axis=(0, 2))
         
-        #save the unrotated stacks as a npy file in the app folder
-        np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
-        '''       
-        
-        
-        # get the number of volumes, stacks and frames from the user input
-        try:
-            num_v = int(self.volumes.get())
-            num_s = int(self.stacks.get())
-            num_f = int(self.frames.get())
-        except ValueError:
-            if self.app is not None:
-                self.app.log_message(
-                    "Error! Enter the number of volumes, stacks and frames"
-                )
-            return
+        #get the mean frame for each stack (get_meanZstack processes each stack one-byone, memory-save)
         self.meanStacks = get_meanZstack(S, num_v, num_s, num_f, Rotcenter=[self.rotx, self.roty], ImgReg=True)
         
-        #save the unrotated stacks as a npy file in the app folder
+        
+        if self.app is not None:
+            self.app.log_message("Save the mean Zstacks as npy files and png images to the DP folder")
+
+        #save the unrotated stacks as a npy file in the DP folder
         np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
         
-        #save each stack as a png file in the app folder
+        #save each stack as a png file in the DP folder
+        
         #create a folder to save the stack png files
         #if the folder already exists, delete it and create a new one
         if os.path.exists(self.DPFolder + "/zstacks"):
             shutil.rmtree(self.DPFolder + "/zstacks")
         os.mkdir(self.DPFolder + "/zstacks")
+        
         #save each stack as a png file using plt
         for i in range(self.meanStacks.shape[0]):
             fig = plt.figure()
@@ -181,25 +155,29 @@ class StackProcessor(tk.Frame):
 
     def display_processed_images(self):
         """
-        display the processed images in the canvas by clicking the created up and down widgets
+        display the processed images in the canvas by clicking up and down keys on the keyboard
         """
         self.canvas.delete("all")
-        # display an image in the stack
         # normalize the image to 0-255 and convert to uint8 before displaying
         image = self.meanStacks[self.display_index]
         image = (image - image.min()) / (image.max() - image.min()) * 255
         image = image.astype("uint8")
 
         # convert the image to ImageTk format
-        self.img_tk = ImageTk.PhotoImage(Image.fromarray(image).convert("L"))
+        image = Image.fromarray(image).convert("L")
+        #add a number to the image to indicate the stack index
+        image = ImageDraw.Draw(image)
+        image.text((10, 10), str(self.display_index + 1), fill="red")
+        
+        self.img_tk = ImageTk.PhotoImage(image)
 
         # display the image
-        # the image has its own size, which is 362 by 362
-        # I want to display it with the center of [256,256] on the canvas
-
+        # the image has a size different from 512*512 after cropping, which is for example, 362*362
+        # so display it with a center same as the rotation center
         self.canvas.create_image(
             self.rotx, self.roty, anchor="center", image=self.img_tk
         )
+        # bind the up and down keys to the canvas
         self.canvas.bind("<Up>", self.previous_image)
         self.canvas.bind("<Down>", self.next_image)
         self.canvas.focus_set()  # set the focus on canvas
