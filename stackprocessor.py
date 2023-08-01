@@ -14,8 +14,8 @@ import shutil
 import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog
-from PIL import Image, ImageTk
-from utils_image import UnrotateCropFrame, get_meanZstack
+from PIL import Image, ImageTk, ImageDraw
+from utils_image import get_meanZstack
 from scanimagetiffio import SITiffIO
 
 class StackProcessor(tk.Frame):
@@ -165,9 +165,9 @@ class StackProcessor(tk.Frame):
 
         # convert the image to ImageTk format
         image = Image.fromarray(image).convert("L")
-        #add a number to the image to indicate the stack index
-        image = ImageDraw.Draw(image)
-        image.text((10, 10), str(self.display_index + 1), fill="red")
+        #add a number to the image to indicate the stack index with red color
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 10), str(self.display_index + 1), fill='red')
         
         self.img_tk = ImageTk.PhotoImage(image)
 
