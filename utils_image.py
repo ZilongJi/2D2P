@@ -471,8 +471,24 @@ def findFOV(zstacks, Img, maxrotangle=30):
     ops = suite2p.default_ops()
     
     w, h = Img.shape
+    
+    #get the last two dimension the meanZ and meanRegImg
+    _, wZ, hZ = zstacks.shape
+    w, h = Img.shape
+    if w>wZ:
+        #cut the meanRegImg to the same size as meanZ
+        Img = Img[:, -wZ:, -hZ:]
+    elif w<wZ:
+        #center pad each edge of meanRegImg to the same size as meanZ
+        wpad = (wZ-w)//2
+        hpad = (hZ-h)//2
+        Img = np.pad(Img, ((wpad, wpad), (hpad, hpad)), mode="constant", constant_values=0)
+    else:
+        pass
+    
+    neww, newh = Img.shape
     #create an empty array to store the rotated images
-    rotImgs = np.zeros((2*maxrotangle+1, w, h))
+    rotImgs = np.zeros((2*maxrotangle+1, neww, newh))
     #all rotation angles
     rotAngles = np.arange(-maxrotangle, maxrotangle+1, 1)
     for i, ang in enumerate(rotAngles):

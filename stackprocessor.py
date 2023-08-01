@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
-from utils_image import UnrotateCropFrame
+from utils_image import UnrotateCropFrame, get_meanZstack
 from scanimagetiffio import SITiffIO
 
 class StackProcessor(tk.Frame):
@@ -106,6 +106,8 @@ class StackProcessor(tk.Frame):
         S.open_tiff_file(self.tifffilename, "r") 
         S.open_rotary_file(self.relogfilename)
         S.interp_times()  # might take a while...
+        
+        '''
         #get all frames and angles in S
         Array = []; 
         for i in range(S.get_n_frames()):
@@ -135,6 +137,24 @@ class StackProcessor(tk.Frame):
         )
         # average across the first and third dimension
         self.meanStacks = np.mean(unrotcropFrames, axis=(0, 2))
+        
+        #save the unrotated stacks as a npy file in the app folder
+        np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
+        '''       
+        
+        
+        # get the number of volumes, stacks and frames from the user input
+        try:
+            num_v = int(self.volumes.get())
+            num_s = int(self.stacks.get())
+            num_f = int(self.frames.get())
+        except ValueError:
+            if self.app is not None:
+                self.app.log_message(
+                    "Error! Enter the number of volumes, stacks and frames"
+                )
+            return
+        self.meanStacks = get_meanZstack(S, num_v, num_s, num_f, Rotcenter=[self.rotx, self.roty], ImgReg=True)
         
         #save the unrotated stacks as a npy file in the app folder
         np.save(self.DPFolder + "/meanstacks.npy", self.meanStacks)
