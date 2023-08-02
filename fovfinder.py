@@ -6,7 +6,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 from utils_image import UnrotateCropFrame, RegFrame, findFOV
 from scanimagetiffio import SITiffIO
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter
 
 class FOVFinder(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
@@ -121,12 +121,16 @@ class FOVFinder(tk.Frame):
         self.meanRegImg = meanRegImg
         
         self.ymax, self.xmax, self.zcorr = findFOV(self.zstack, meanRegImg, maxrotangle=30)
-        self.zcorr_gs = gaussian_filter1d(self.zcorr.copy(), 2, axis=0)
+        
+        #gaussian filter the ymax, xmax, and zcorr
+        self.ymax_gs = gaussian_filter(self.ymax.copy(), 2)
+        self.xmax_gs = gaussian_filter(self.xmax.copy(), 2)
+        self.zcorr_gs = gaussian_filter(self.zcorr.copy(), 2)
         
         #display the max zstack in the canvas
-        #self.display_zstack()
+        self.display_zstack()
         #display the mean tiff in the canvas
-        #self.display_tiff()
+        self.display_tiff()
         #display the FOV analysis in the canvas
         self.display_FOVanalysis()
         
@@ -134,9 +138,9 @@ class FOVFinder(tk.Frame):
         self.canvas_zstack.delete("all")  
         #find the max value in zcorr and mark it with a red dot
         maxvalue = np.max(self.zcorr_gs)
-        maxindex = np.where(self.zcorr_gs == maxvalue)
+        self.maxindex = np.where(self.zcorr_gs == maxvalue)
         
-        stack_ind = maxindex[0][0]
+        stack_ind = self.maxindex[0][0]
         
         stack_img = self.zstack[stack_ind]
         
@@ -147,14 +151,14 @@ class FOVFinder(tk.Frame):
         plt.axis('off')
         fig.savefig(self.FOVFolder + "/maxstack.png")
 
-        stack_img = (stack_img - stack_img.min()) / (stack_img.max() - stack_img.min()) * 255
-        stack_img = stack_img.astype("uint8")
+        #stack_img = (stack_img - stack_img.min()) / (stack_img.max() - stack_img.min()) * 255
+        #stack_img = stack_img.astype("uint8")
 
         # convert the image to ImageTk format
-        stack_img_tk = ImageTk.PhotoImage(Image.fromarray(stack_img).convert("L"))
+        #stack_img_tk = ImageTk.PhotoImage(Image.fromarray(stack_img).convert("L"))
         
         # display the max zstack in the canvas
-        self.canvas_zstack.create_image(self.rotx, self.roty, anchor="center", image=stack_img_tk)
+        #self.canvas_zstack.create_image(self.rotx, self.roty, anchor="center", image=stack_img_tk)
             
     def display_tiff(self):
         self.canvas_tiff.delete("all")  
@@ -163,46 +167,68 @@ class FOVFinder(tk.Frame):
         plt.axis('off')
         fig.savefig(self.FOVFolder + "/meanReg.png")     
 
-        meanImg = self.meanRegImg
-        meanImg = (meanImg - meanImg.min()) / (meanImg.max() - meanImg.min()) * 255
-        meanImg = meanImg.astype("uint8")
+        #meanImg = self.meanRegImg
+        #meanImg = (meanImg - meanImg.min()) / (meanImg.max() - meanImg.min()) * 255
+        #meanImg = meanImg.astype("uint8")
 
         # convert the image to ImageTk format
-        meanImg_tk = ImageTk.PhotoImage(Image.fromarray(meanImg).convert("L"))
+        #meanImg_tk = ImageTk.PhotoImage(Image.fromarray(meanImg).convert("L"))
         # display the mean tiff in the canvas
-        self.canvas_tiff.create_image(self.rotx, self.roty, anchor="center", image=meanImg_tk)
+        #self.canvas_tiff.create_image(self.rotx, self.roty, anchor="center", image=meanImg_tk)
 
     def display_FOVanalysis(self):
-        fig = plt.figure(figsize=(512/100,512/100),dpi=100)
-        plt.imshow(self.zcorr_gs, cmap='gray')
+        #according to the maxindex, find the value in self.ymax and self.xmax
+        ymax_value = self.ymax[self.maxindex[0][0], self.maxindex[1][0]]
+        xmax_value = self.xmax[self.maxindex[0][0], self.maxindex[1][0]]
+
+        fig = plt.figure(figsize=(1024/100,256/100),dpi=100)
         
-        maxvalue = np.max(self.zcorr_gs)
-        maxindex = np.where(self.zcorr_gs == maxvalue)       
-        plt.plot(maxindex[1][0], maxindex[0][0], 'ro')
+        cmap = 'cividis'
         
+        plt.subplot(1,3,1)
+        plt.imshow(self.zcorr_gs, cmap=cmap, aspect='auto')
         plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
-        
+        plt.colorbar()
+        plt.title('zcorr map, maxzplane='+ str(self.maxindex[0][0]))
         plt.xlabel('rotation degree')
         plt.ylabel('stack index')
+        #mark the max value with a red dot
+        plt.plot(self.maxindex[1][0], self.maxindex[0][0], 'ro')
         
-        #according to the maxindex, find the value in self.ymax and self.xmax
-        ymax_value = self.ymax[maxindex[0][0], maxindex[1][0]]
-        xmax_value = self.xmax[maxindex[0][0], maxindex[1][0]]
-        
-        #add text to the plot with red color
-        plt.text(maxindex[1][0], maxindex[0][0], 'maxZplane='+ str(maxindex[0][0])+'\nshift (y,x) = (' + str(ymax_value) +',' + str(xmax_value)+')', fontsize=12, color='red')
-        
+
+        plt.subplot(1,3,2)
+        plt.imshow(self.ymax_gs, cmap=cmap, aspect='auto')
+        plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
+        plt.colorbar()
+        plt.title('ymax map, shift='+str(ymax_value))
+        plt.xlabel('rotation degree')
+        plt.ylabel('stack index')
+        #mark the max value with a red dot
+        plt.plot(self.maxindex[1][0], self.maxindex[0][0], 'ro')
+
+
+        plt.subplot(1,3,3)
+        plt.imshow(self.xmax_gs, cmap=cmap, aspect='auto')
+        plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
+        plt.colorbar()
+        plt.title('xmax map, shift='+str(xmax_value))
+        plt.xlabel('rotation degree')
+        plt.ylabel('stack index')
+        #mark the max value with a red dot
+        plt.plot(self.maxindex[1][0], self.maxindex[0][0], 'ro')
+
+        plt.tight_layout()
+
         fig.savefig(self.FOVFolder + "/FOV.png")
         
         #convert the png file to a tk image and display it in the canvas
         self.fov_tk = ImageTk.PhotoImage(Image.open(self.FOVFolder + "/FOV.png")) 
         self.canvas_FOVanalysis.create_image(0, 0, anchor="nw", image=self.fov_tk)
 
-
 if __name__ == "__main__":
     root = tk.Tk()
     app = FOVFinder(
         master=root,
-        folder="/home/zilong/Desktop/2D2P/Data/183_28072023"
+        folder="/home/zilong/Desktop/2D2P/Data"
     )
     app.mainloop()

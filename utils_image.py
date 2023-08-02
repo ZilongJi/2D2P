@@ -476,8 +476,11 @@ def findFOV(zstacks, Img, maxrotangle=30):
     _, wZ, hZ = zstacks.shape
     w, h = Img.shape
     if w>wZ:
-        #cut the meanRegImg to the same size as meanZ
-        Img = Img[:, -wZ:, -hZ:]
+        #cut the meanRegImg to the same size as meanZ, but with the same center
+        #Img = Img[:, -wZ:, -hZ:]
+        wpad = (w-wZ)//2
+        hpad = (h-hZ)//2
+        Img = Img[wpad:-wpad, hpad:-hpad]
     elif w<wZ:
         #center pad each edge of meanRegImg to the same size as meanZ
         wpad = (wZ-w)//2
