@@ -9,14 +9,17 @@ import suite2p
 from suite2p.registration import register, rigid
 from scanimagetiffio import SITiffIO
 
-def getMeanTiff_randomsampling(S, frac=0.1):
+def getMeanTiff_randomsampling(S, frac=0.1, return_median=False):
     """
     get the mean frame by averaging over recording per steps
+    get the median value of the mean frame if return_median=True, for histogram matching purpose
     Input:
         S: the SITiffIO object
         frac: the fraction of frames to average over
+        return_median: whether to return the median value of the mean frame
     Output:
-        meanFrame
+        meanFrame (np.array, uint8): the mean frame
+        median_val (float): the median value of the mean frame (only returned if return_median=True)
     """
     nframes = S.get_n_frames()
     
@@ -25,13 +28,14 @@ def getMeanTiff_randomsampling(S, frac=0.1):
     print('Randomly select {} frames to average over...'.format(num))
     indexs = np.random.choice(nframes, num, replace=False)
 
-    frames = np.zeros((num, S.get_frame(1).shape[0], S.get_frame(1).shape[1]))
+    meanframe = np.zeros((S.get_frame(1).shape[0], S.get_frame(1).shape[1]))
     for i, ind in enumerate(indexs):
-        frames[i,:,:] = S.get_frame(ind+1)
-
-    #average over the frames
-    meanFrame = np.mean(frames, axis=0)
+        meanframe += S.get_frame(ind+1)/num
     
+    #get the median value of the mean frame
+    median_val = np.median(meanFrame)
+    
+    '''
     #set the border (10 pixels) to median value
     #othersiwse the border will be very bright and dominate the normalization
     meanFrame[:10,:] = np.median(meanFrame)
@@ -46,9 +50,13 @@ def getMeanTiff_randomsampling(S, frac=0.1):
     
     #change to uint8
     meanFrame = np.uint8(meanFrame)
+    '''
     
-    return meanFrame
-
+    if return_median:
+        return meanframe.astype(np.int16), median_val
+    else:
+        return meanframe.astype(np.int16)
+    
 def getMeanTiff_equalsampling(S, numBins):
     """
     get the mean frame by sampling frames equally from each angle bin
