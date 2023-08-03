@@ -166,17 +166,18 @@ class CenterDetector(tk.Frame):
         self.imgTK_ang  = ImageTk.PhotoImage(self.img_ang)
         self.canvas4angle.create_image(256, 128, image=self.imgTK_ang, anchor="center")
         
-        
     def display_image(self, image):
         # display the image on the canvas with gray colormap
-        # save the image
-        self.img = Image.fromarray(image)
-        self.img = self.img.convert("L")
-        self.imgTK = ImageTk.PhotoImage(self.img)
+        image = (image - image.min()) / (image.max() - image.min()) * 255
+        image = image.astype("uint8")
+        
+        image = Image.fromarray(image)
+        image= image.convert("L")
+        self.imgTK = ImageTk.PhotoImage(image)
         self.canvas.create_image(0, 0, image=self.imgTK, anchor="nw")
 
         # save the image as a png file under self.DPfolder
-        self.img.save(self.DPfolder + "/averagedTiff.png")
+        image.save(self.DPfolder + "/averagedTiff.png")
 
         # Enabling circle drawing on the image.
         self.canvas.bind("<Button-1>", self.draw_circle)
