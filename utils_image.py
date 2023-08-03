@@ -9,14 +9,13 @@ import suite2p
 from suite2p.registration import register, rigid
 from scanimagetiffio import SITiffIO
 
-def getMeanTiff_randomsampling(S, frac=0.1, return_median=False):
+def getMeanTiff_randomsampling(S, frac=0.1):
     """
     get the mean frame by averaging over recording per steps
     get the median value of the mean frame if return_median=True, for histogram matching purpose
     Input:
         S: the SITiffIO object
         frac: the fraction of frames to average over
-        return_median: whether to return the median value of the mean frame
     Output:
         meanFrame (np.array, uint8): the mean frame
         median_val (float): the median value of the mean frame (only returned if return_median=True)
@@ -28,34 +27,21 @@ def getMeanTiff_randomsampling(S, frac=0.1, return_median=False):
     print('Randomly select {} frames to average over...'.format(num))
     indexs = np.random.choice(nframes, num, replace=False)
 
-    meanframe = np.zeros((S.get_frame(1).shape[0], S.get_frame(1).shape[1]))
+    meanframe = np.zeros(S.get_frame(1).shape, dtype=np.float64)
     for i, ind in enumerate(indexs):
         meanframe += S.get_frame(ind+1)/num
     
     #get the median value of the mean frame
-    median_val = np.median(meanFrame)
+    median_val = np.median(meanframe)
     
-    '''
     #set the border (10 pixels) to median value
-    #othersiwse the border will be very bright and dominate the normalization
-    meanFrame[:10,:] = np.median(meanFrame)
-    meanFrame[-10:,:] = np.median(meanFrame)
-    meanFrame[:,:10] = np.median(meanFrame)
-    meanFrame[:,-10:] = np.median(meanFrame)
-    
-    #normalize the meanFrame to 0-255
-    meanFrame = meanFrame - np.min(meanFrame)
-    meanFrame = meanFrame/np.max(meanFrame)
-    meanFrame = meanFrame*255
-    
-    #change to uint8
-    meanFrame = np.uint8(meanFrame)
-    '''
-    
-    if return_median:
-        return meanframe.astype(np.int16), median_val
-    else:
-        return meanframe.astype(np.int16)
+    #othersiwse the border will be very bright and dominate the mean value
+    meanframe[:10,:] = median_val
+    meanframe[-10:,:] = median_val
+    meanframe[:,:10] = median_val
+    meanframe[:,-10:] = median_val
+
+    return meanframe.astype(np.int16)
     
 def getMeanTiff_equalsampling(S, numBins):
     """
@@ -73,8 +59,6 @@ def getMeanTiff_equalsampling(S, numBins):
 
     #make a list of the bin edges
     bin_edges =  np.linspace(0,360,numBins+1)
-    #make a list of the bin centers
-    bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
 
     #make a list of the number of elements in each bin
     bin_counts = np.histogram(angles, bins=bin_edges)[0]
@@ -100,32 +84,26 @@ def getMeanTiff_equalsampling(S, numBins):
     #to save space,, we running average the frames
 
     #initialize the running average
-    meanframe = np.zeros(S.get_frame(1).shape)
+    meanframe = np.zeros(S.get_frame(1).shape, dtype=np.float64)
     #loop through the bin_sample_list
     for i in bin_sample_list:
-        #get the frame
-        frame = S.get_frame(i)
+        if i==0:
+            continue
         #add the frame to the running average devide by the number of frames
-        meanframe += frame/len(bin_sample_list)
+        meanframe += S.get_frame(i)/len(bin_sample_list)
 
+    #get the median value of the mean frame
+    median_val = np.median(meanframe)   
+    
     #set the border (10 pixels) to median value
     #othersiwse the border will be very bright and dominate the normalization
-    meanframe[:10,:] = np.median(meanframe)
-    meanframe[-10:,:] = np.median(meanframe)
-    meanframe[:,:10] = np.median(meanframe)
-    meanframe[:,-10:] = np.median(meanframe)
+    meanframe[:10,:] = median_val
+    meanframe[-10:,:] = median_val
+    meanframe[:,:10] = median_val
+    meanframe[:,-10:] = median_val
 
-    #normalize the running_average to 0-255
-    meanframe = meanframe - np.min(meanframe)
-    meanframe = meanframe/np.max(meanframe)
-    meanframe = meanframe*255
-
-    #change to uint8
-    meanframe = np.uint8(meanframe)
+    return meanframe.astype(np.int16)
     
-    return meanframe
-    
-
 def getFramesandTimeStamps(tiffpath):
     """
     #get the acquisition time of each frame in the tiff file using tifffile
