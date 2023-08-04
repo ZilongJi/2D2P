@@ -1,13 +1,18 @@
 #%%
+import os
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 import time
 import tifffile
 from datetime import datetime, timedelta
+
 import suite2p
 from suite2p.registration import register, rigid
+
 from scanimagetiffio import SITiffIO
+from utils_io import get_imaging_files, get_rotary_center
 
 def getMeanTiff_randomsampling(S, frac=0.1):
     """
@@ -103,100 +108,6 @@ def getMeanTiff_equalsampling(S, numBins):
     meanframe[:,-10:] = median_val
 
     return meanframe.astype(np.int16)
-    
-def getFramesandTimeStamps(tiffpath):
-    """
-    #get the acquisition time of each frame in the tiff file using tifffile
-    #get each frame as well
-    tiffpath: the path to the tiff file
-    """
-    
-    Timestamps = []
-    Frames = []
-    Epochs = []
-    with tifffile.TiffFile(tiffpath) as tif:
-        for page in tif.pages:
-            #get each frame
-            Frames.append(page.asarray())
-            
-            #get the acquisition time of each frame
-            desp = page.tags['ImageDescription'].value
-            #desp is a string, need to convert to list
-            #I want to find the value of the key "frameTimestamps_sec"
-            #and the value of the key "epoch" 
-            desp = desp.split('\n')
-            for line in desp:
-                if line.startswith('frameTimestamps_sec'):
-                    frametimestamps = line.split('=')[1]
-                    #convert string to float and store in a list
-                    frametimestamps = float(frametimestamps)
-                    #frametimestamps represents seconds, convert to datetime object
-                    frametimestamps = timedelta(seconds=frametimestamps)
-                    Timestamps.append(frametimestamps)
-                if line.startswith('epoch'):
-                    epoch = line.split('=')[1]
-                    #change epoch which is a list like [2023  6 19 16 58 56.387] to Datetime object
-                    epoch = datetime.strptime(epoch, ' [%Y  %m %d %H %M %S.%f]')
-                    Epochs.append(epoch)
-
-    #For each element in Timestamps, add the corresponding epoch to it
-    #and store in a list
-    acquistionTime = [Timestamps[i] + Epochs[i] for i in range(len(Timestamps))]
-    
-    return Frames, acquistionTime
-
-def getTimeandRotAngle(tiffpath, relogfile):
-    """
-    Get the time stamp and rotation angle from the log file
-    Args:
-        tiffpath (_type_): _description_
-        relogfile (_type_): _description_
-    """
-    #load the relog txt file and read the lines
-    #each line looks like: 2023-06-19 16:57:22.108 Rot=247.089130 Trigger=0.000000
-    #save the time (beofre first space ) 
-    #and rotation angle (value after Rot=) in two lists
-    RETimeStamps = []
-    RERotAngles = []
-    with open(relogfile, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            line = line.split(' ')
-            #get the time stamp
-            RETimeStamp = line[0] + ' ' + line[1]
-            #convert to datetime object
-            RETimeStamp = datetime.strptime(RETimeStamp, '%Y-%m-%d %H:%M:%S.%f')
-            RETimeStamps.append(RETimeStamp)
-            
-            #get the rotation angle
-            RERotAngle = line[2].split('=')[1]
-            #convert to float
-            RERotAngle = float(RERotAngle)
-            RERotAngles.append(RERotAngle)   
-    
-    return RETimeStamps, RERotAngles
-    
-
-def getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles):
-    """
-    get the rotation angle for each of the frame
-    Args:
-        acquistionTimeStamps (list): _description_
-        RETimeStamps (list): _description_
-        RERotAngles (list): _description_
-    """
-    #for each element in acquistionTimeStamps, find the closest element in RETimeStamps
-    #and get the corresponding rotation angle
-    RotAngles = []
-    for i in range(len(acquistionTimeStamps)):
-        #find the closest element in RETimeStamps
-        #find the index of the closest element in RETimeStamps
-        idx = (np.abs(np.array(RETimeStamps) - acquistionTimeStamps[i])).argmin()
-        #get the corresponding rotation angle
-        RotAngle = RERotAngles[idx]
-        RotAngles.append(RotAngle)
-    
-    return RotAngles
 
 def UnrotateCropFrame(Array, Angle, rotCenter): 
     """
@@ -227,39 +138,6 @@ def UnrotateCropFrame(Array, Angle, rotCenter):
     NewFrames = np.array(NewFrames)
     
     return NewFrames
-    
-def UnrotateFrame_tiffile(tiffpath, relogfile, rotCenter=[256,256]):
-    """
-    Unrotate each frame with the corresponding rotation angle, as well as a rotation center
-    using python tifffile package (much slower than SITiffIO)
-    
-    Args:
-        tiffpath: the path to the tiff file
-        relogfile: the path to the relog file
-        rotCenter: the rotation center, default is image center which is [256,256]
-    """
- 
-     #get the acquisition time of each frame in the tiff file using tifffile
-    Frames, acquistionTimeStamps = getFramesandTimeStamps(tiffpath)
-    
-    #get the time stamp and rotation angle from the log file
-    RETimeStamps, RERotAngles = getTimeandRotAngle(tiffpath, relogfile)
-    
-    #get the rotation angle for each of the frame
-    RotAngles = getRotAngle(acquistionTimeStamps, RETimeStamps, RERotAngles)
-    
-    #for each frame in Frames, unrotate it with the corresponding rotation angle using Image.rotate
-    #and store in a list
-    UnrotatedFrames = []
-    for i in range(len(Frames)):
-        UnrotatedFrame = Image.fromarray(Frames[i]).rotate(RotAngles[i], center=rotCenter)
-        #crop the largest inner rectangle from the unrotated frame
-        UnrotatedFrame = cropLargestRecT(UnrotatedFrame, rotCenter)
-        #convert the PIL image back to int16
-        UnrotatedFrame = np.array(UnrotatedFrame, dtype=np.int16)
-        UnrotatedFrames.append(UnrotatedFrame)
-    
-    return UnrotatedFrames
 
 def cropLargestRecT(img, cropcenter):
     """
@@ -533,67 +411,96 @@ def hist_match(source, template):
 
     return interp_t_values[bin_idx].reshape(oldshape)
 
+def UnrotateTiff(datafolder, namelist, readVRlogs=False):
+    '''
+    Unrotate all the imaging tiff files in namelist, crop the tiff files and save them into a folder named UnrotTiff
+    Args:
+        datafolder: the folder containing the data files
+        namelist: a list of names, e.g., [00003, 00004, 00005]
+    '''
+    
+    print('Unrotate Imaging Tiff files...')
+    
+    #1, create a folder named UnrotTiff under the datafolder folder to save data
+    UnrotTiffFolder = datafolder + "UnrotTiff/"
+    #if the folder exists, remove it, and then create a new one
+    if os.path.exists(UnrotTiffFolder):
+        shutil.rmtree(UnrotTiffFolder)
+    os.makedirs(UnrotTiffFolder) 
+    
+    #2, get all the tiff files
+    allfiles = get_imaging_files(datafolder, namelist, readVRlogs=False)
+    
+    #3, get the rotary center from the centerfile
+    circlecenterfilename = datafolder+"DP_exp/circlecenter.txt"
+    #through out an error if the file does not exist
+    if not os.path.exists(circlecenterfilename):
+        raise ValueError("The rotary center file does not exist! Make sure DP_exp folder exists and the rotary center file is in it!")
+    
+    rotCenter = get_rotary_center(circlecenterfilename)
+    print("Rotation center is at ({}, {})".format(rotCenter[0], rotCenter[1]))
+
+    #4, get the median value of the mean frame for each tiff file for later histogram matching
+    
+    #open a txt file to store the median values
+    with open(UnrotTiffFolder+"medianVals.txt", "w") as f:
+        f.write("filename\tmedian\n")
+    
+    all_medians = []
+    for i, (tiff, _)  in enumerate(allfiles):
+        print('Get the median value of tiff file: ', tiff)
+        S = SITiffIO()
+        S.open_tiff_file(tiff, "r")
+        meanFrame = getMeanTiff_randomsampling(S, frac=0.01)
+        medianVal = np.median(meanFrame)
+        #store the median value
+        all_medians.append(medianVal)
+        #save the median values into a txt file under UnrotTiffFolder
+        with open(UnrotTiffFolder+"medianVals.txt", "a") as f:
+            f.write(tiff.split("/")[-1].split(".")[0]+"\t"+str(medianVal)+"\n")
+    
+    #get the histgram offset 
+    histoffset = [all_medians[0]-all_medians[i] for i in range(len(all_medians))]
+        
+    #5, for each pair of tiff file and RElog file, unrotate the tiff file, match the histogram, and save it into the UnrotTiff folder
+    for i, (tiff_file, RElog_file) in enumerate(allfiles):
+        
+        #time
+        t = time.time()
+
+        #geterante the unrotated tiff file name
+        unrotated_tiff_file = UnrotTiffFolder+tiff_file.split("/")[-1].split(".")[0] + "_unrot.tif"
+        #print processing file name
+        print("Unrotating tiff file: " + tiff_file)
+
+        #get histogram offset
+        offset = histoffset[i]
+    
+        #unrotate the tiff file and save it into the UnrotTiff folder
+        S = SITiffIO()
+        S.open_tiff_file(tiff_file, "r")
+        S.open_tiff_file(unrotated_tiff_file, "w") #for writing
+        S.open_rotary_file(RElog_file)
+        S.interp_times()  # might take a while...
+        
+        N = S.get_n_frames()
+        Alltheta = S.get_all_theta()
+
+        for i in range(N):
+            frame_i = S.get_frame(i+1)
+            theta_i = Alltheta[i]
+            #unrotate the frame
+            unrotatedFrame = Image.fromarray(frame_i).rotate(theta_i, center=rotCenter)
+            #crop the largest inner rectangle from the unrotated frame
+            croppedFrame = cropLargestRecT(unrotatedFrame, rotCenter)
+            #convert the PIL image back to int16
+            croppedFrame = np.array(croppedFrame, dtype=np.int16)+offset
+
+            S.write_frame(croppedFrame, i)
+        
+        #time
+        print("Time for unrotating current tiff file: " + str(time.time()-t))
+
 #%%
 if __name__ == "__main__":
-    #%% read the imaging tiff and display the mean frame
-    #data folder
-
-    dataFolder = '/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_REtest/'
-    tifffilepath = dataFolder+ 'imaging_testing_162_00001.tif'
-    vrlogfile = dataFolder + '20230524-144206.06.txt'
-    relogfile = dataFolder + 'REdata_20230524_151401.txt'
-
-    # dataFolder = '/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/'
-    # tifffilepath = dataFolder+ '162_block1_19062023__00001.tif'
-    # vrlogfile = dataFolder + '20230619-162203.03.txt'
-    # relogfile = dataFolder + 'REdata_20230619_170256.txt'
-
-    #read the data
-    S = SITiffIO()
-    S.open_tiff_file(tifffilepath, 'r')
-    S.open_log_file(vrlogfile)
-    S.open_rotary_file(relogfile)
-    S.interp_times() # might take a while... 
-    
-    #%%
-    meanframe = getMeanTiff(S, frac=0.1)
-    #display the mean frame
-
-    plt.imshow(meanframe, cmap='gray')  
-    
-    #%% read a smaller tiff file and calculate the rotation angle of each frame
-    dataFolder = '/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/'
-    tiffpath = dataFolder+ '162_zstack_19062023__00002.tif'
-    relogfile = dataFolder + 'REdata_20230619_165713.txt'
-
-    #%% unrotate each frame with tifffile
-    newFrames_Tifffile = UnrotateFrame_tiffile(tiffpath, relogfile, rotCenter=[256,256])
-    
-    #%% unrotate each frame with SITiffIO
-    newFrames_SITiffIO = UnrotateFrame_SITiffIO(tiffpath, relogfile, rotCenter=[256,256])
-    
-    #%% display the mean frame
-    meanframe = np.mean(newFrames_Tifffile, axis=0)
-    plt.imshow(meanframe, cmap='gray')
-    
-    #reshape the newFrames to [5,41,10, width, height]
-    newFrames_array = np.array(newFrames_Tifffile)
-    newFrames_array = newFrames_array.reshape([5,41,10,newFrames_array.shape[1], newFrames_array.shape[2]])
-
-    #average across the first and third dimension
-    meanStacks = np.mean(newFrames_array, axis=(0,2))
-    #display images in the meanStacks
-    for i in range(meanStacks.shape[0]):
-        plt.imshow(meanStacks[i,:,:], cmap='gray')
-        plt.show()  
-    #%% 
-    dataFolder = '/home/zilong/Desktop/2PAnalysis/2PData/from_Guifen/162_test2_2blocks_19062023/'
-    tiffpath = dataFolder+ '162_block1_19062023__00001.tif'
-    relogfile = dataFolder + 'REdata_20230619_170256.txt' 
-    
-    #get the acquisition time of each frame in the tiff file using tifffile
-    Frames, acquistionTimeStamps = getFramesandTimeStamps(tiffpath) 
-    
-    
-
-# %%
+    pass
