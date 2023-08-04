@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
-from utils_image import UnrotateCropFrame, RegFrame, findFOV
+from utils_image import UnrotateCropFrame, RegFrame, findFOV, hist_match
 from scanimagetiffio import SITiffIO
 from scipy.ndimage import gaussian_filter
 
@@ -15,6 +15,9 @@ class FOVFinder(tk.Frame):
         self.folder = folder
         self.app = app
         self.grid()
+        
+        # add tk.Entry widgets to allow users to enter the number of volumes, stacks and frames
+        self.maxrotangle = tk.StringVar()
 
         self.create_widgets()
         self.create_canvas_zstack()    
@@ -30,9 +33,13 @@ class FOVFinder(tk.Frame):
         
         # create a button to import RElog file
         tk.Button(self, text="Import RElog file", command=self.import_RElog).grid(row=2, column=0)
+        
+        # Create labels and entry widgets for the three numbers entered by the user
+        tk.Label(self, text="maxrotangle:").grid(row=3, column=0)
+        tk.Entry(self, textvariable=self.maxrotangle).grid(row=4, column=0)
 
         # create a button to find the field of view
-        tk.Button(self, text="Find FOV", command=self.findFOV).grid(row=3,column=0)
+        tk.Button(self, text="Find FOV", command=self.findFOV).grid(row=5,column=0)
         
         # create a canvas to display the field of view
 
@@ -42,15 +49,15 @@ class FOVFinder(tk.Frame):
         # that allows me to display each of the frames in the stack by clicking
         # the up and down arrows (need to be created)
         self.canvas_zstack = tk.Canvas(self, height=512, width=512, bg="#4D4D4D")
-        self.canvas_zstack.grid(row=4, column=0)
+        self.canvas_zstack.grid(row=6, column=0)
     
     def create_canvas_tiff(self):
         self.canvas_tiff = tk.Canvas(self, height=512, width=512, bg="#4D4D4D")
-        self.canvas_tiff.grid(row=4, column=1)
+        self.canvas_tiff.grid(row=6, column=1)
     
     def create_canvas_FOVanalysis(self):
         self.canvas_FOVanalysis = tk.Canvas(self, height=256, width=1024, bg="#4D4D4D")
-        self.canvas_FOVanalysis.grid(row=5, column=0, columnspan=2)
+        self.canvas_FOVanalysis.grid(row=7, column=0, columnspan=2)
 
     def import_zstack(self):
         # filedialog: and set initialdir set as Desktop, filetypes set as tiff and all files
@@ -118,9 +125,14 @@ class FOVFinder(tk.Frame):
         #perform image registraion
         meanRegImg, _ = RegFrame(unrotFrames)
         
+        #histogram equalization
+        #self.meanRegImg = hist_match(meanRegImg, self.zstack[35]).astype(np.int16)
+        
         self.meanRegImg = meanRegImg
         
-        self.ymax, self.xmax, self.zcorr = findFOV(self.zstack, meanRegImg, maxrotangle=30)
+        maxrotangle = int(self.maxrotangle.get())
+        
+        self.ymax, self.xmax, self.zcorr = findFOV(self.zstack, self.meanRegImg, maxrotangle=maxrotangle)
         
         #gaussian filter the ymax, xmax, and zcorr
         self.ymax_gs = gaussian_filter(self.ymax.copy(), 2)
@@ -158,7 +170,7 @@ class FOVFinder(tk.Frame):
     def display_tiff(self):
         self.canvas_tiff.delete("all")  
         #save the meanRegImg as a png file using Image
-        meanImg = self.meanRegImg
+        meanImg = self.meanRegImg.copy()
         meanImg = (meanImg - meanImg.min()) / (meanImg.max() - meanImg.min()) * 255
         meanImg = meanImg.astype("uint8")
         im = Image.fromarray(meanImg).convert("L")
@@ -178,9 +190,12 @@ class FOVFinder(tk.Frame):
         
         cmap = 'cividis'
         
+        maxrotangle = int(self.maxrotangle.get())
+        
+        interval = maxrotangle//3
         plt.subplot(1,3,1)
         plt.imshow(self.zcorr_gs, cmap=cmap, aspect='auto')
-        plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
+        plt.xticks(np.arange(0, 2*maxrotangle+1, interval), np.arange(-maxrotangle, maxrotangle+1, interval))
         plt.colorbar()
         plt.title('zcorr map, maxzplane='+ str(self.maxindex[0][0]))
         plt.xlabel('rotation degree')
@@ -191,7 +206,7 @@ class FOVFinder(tk.Frame):
         cmap='coolwarm'
         plt.subplot(1,3,2)
         plt.imshow(self.ymax_gs, cmap=cmap, aspect='auto')
-        plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
+        plt.xticks(np.arange(0, 2*maxrotangle+1, interval), np.arange(-maxrotangle, maxrotangle+1, interval))
         plt.colorbar()
         plt.title('ymax map, shift='+str(ymax_value))
         plt.xlabel('rotation degree')
@@ -202,7 +217,7 @@ class FOVFinder(tk.Frame):
 
         plt.subplot(1,3,3)
         plt.imshow(self.xmax_gs, cmap=cmap, aspect='auto')
-        plt.xticks(np.arange(0, 61, 10), np.arange(-30, 31, 10))
+        plt.xticks(np.arange(0, 2*maxrotangle+1, interval), np.arange(-maxrotangle, maxrotangle+1, interval))
         plt.colorbar()
         plt.title('xmax map, shift='+str(xmax_value))
         plt.xlabel('rotation degree')
