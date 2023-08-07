@@ -119,7 +119,7 @@ class FOVFinder(tk.Frame):
         S.open_tiff_file(self.tifffilename, "r")
         S.open_rotary_file(self.relogfilename)
         #extract the last self.numFrames frames from the tiff file
-        tailArray, tailAng = S.tail(500)   
+        tailArray, tailAng = S.tail(1000)   
         # unrotate each frame in the tiff file with the detected rotation center
         unrotFrames  = UnrotateCropFrame(tailArray, tailAng, rotCenter=[self.rotx, self.roty])
         #perform image registraion

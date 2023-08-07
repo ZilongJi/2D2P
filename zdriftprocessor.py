@@ -4,7 +4,7 @@
 
 import os
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, gaussian_filter
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import tkinter as tk
@@ -13,7 +13,7 @@ from PIL import Image, ImageTk
 
 import suite2p
 from scanimagetiffio import SITiffIO
-from utils_image import UnrotateCropFrame, RegFrame, compute_zpos_sp
+from utils_image import UnrotateCropFrame, RegFrame, compute_zpos_sp, findFOV
 
 class ZdriftProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
@@ -120,6 +120,26 @@ class ZdriftProcessor(tk.Frame):
         
         #add Gaussian smoothing to the corrMatrix (with sigma=2, borrow from the suite2p code)
         self.corrMatrix = gaussian_filter1d(self.corrMatrix.copy(), 2, axis=0)
+        
+        #tet with the mean frames
+        maxrotangle = 30
+        interval = maxrotangle//3
+        mean_ymax, mean_xmax, mean_zcorr = findFOV(meanstacks, self.meanRegImg, maxrotangle=maxrotangle)
+        mean_zcorr_gs = gaussian_filter(mean_zcorr.copy(), 2)
+        
+        maxvalue = np.max(mean_zcorr_gs)
+        maxindex = np.where(mean_zcorr_gs == maxvalue)
+        
+        fig = plt.figure()
+        plt.imshow(mean_zcorr_gs, cmap='coolwarm', aspect='auto')
+        plt.xticks(np.arange(0, 2*maxrotangle+1, interval), np.arange(-maxrotangle, maxrotangle+1, interval))
+        plt.colorbar()
+        plt.title('zcorr map, maxzplane='+ str(maxindex[0][0]))
+        plt.xlabel('rotation degree')
+        plt.ylabel('stack index')
+        #mark the max value with a red dot
+        plt.plot(maxindex[1][0], maxindex[0][0], 'ro')
+        fig.savefig(self.DPFolder + "/maxcorrmeanframe.png")
         
         #display the corrMatrix in the canvas
         self.display_corrMatrix()
