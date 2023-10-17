@@ -411,7 +411,7 @@ def hist_match(source, template):
 
     return interp_t_values[bin_idx].reshape(oldshape)
 
-def UnrotateTiff(datafolder, namelist, readVRlogs=False):
+def UnrotateTiff(datafolder, namelist, readVRlogs=False, shiftyx=None, cropsize=None, savefolder=None):
     '''
     Unrotate all the imaging tiff files in namelist, crop the tiff files and save them into a folder named UnrotTiff
     Args:
@@ -421,8 +421,11 @@ def UnrotateTiff(datafolder, namelist, readVRlogs=False):
     
     print('Unrotate Imaging Tiff files...')
     
-    #1, create a folder named UnrotTiff under the datafolder folder to save data
-    UnrotTiffFolder = os.path.join(datafolder, "UnrotTiff/")
+    if savefolder is None:
+        #1, create a folder named UnrotTiff under the datafolder folder to save data
+        UnrotTiffFolder = os.path.join(datafolder, "UnrotTiff/")
+    else:
+        UnrotTiffFolder = os.path.join(datafolder, savefolder)                                  
     #if the folder exists, remove it, and then create a new one
     if os.path.exists(UnrotTiffFolder):
         shutil.rmtree(UnrotTiffFolder)
@@ -493,8 +496,27 @@ def UnrotateTiff(datafolder, namelist, readVRlogs=False):
             unrotatedFrame = Image.fromarray(frame_i).rotate(theta_i, center=rotCenter)
             #crop the largest inner rectangle from the unrotated frame
             croppedFrame = cropLargestRecT(unrotatedFrame, rotCenter)
+        
             #convert the PIL image back to int16
             croppedFrame = np.array(croppedFrame, dtype=np.int16)+offset
+            
+            #shift the croppedFrame and crop to cropsize 
+            #!!!this is for cross-day matching of ROI!!!
+            if shiftyx is not None and cropsize is not None:
+                #shift croppedFrame
+                croppedFrame = np.roll(croppedFrame, shiftyx, axis=(0,1))
+                #center crop croppedFrame_shifted to the same size as cropsize
+                height, width = croppedFrame.shape
+                left = int((width - cropsize[0])/2)
+                top = int((height - cropsize[1])/2)
+                right = int((width + cropsize[0])/2)
+                bottom = int((height + cropsize[1])/2)
+                #transform to PIL image
+                croppedFrame = Image.fromarray(croppedFrame)
+                #crop
+                croppedFrame = croppedFrame.crop((left, top, right, bottom))
+                #transform back to numpy array
+                croppedFrame = np.array(croppedFrame)
 
             S.write_frame(croppedFrame, i)
         

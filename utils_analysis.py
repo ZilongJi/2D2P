@@ -173,90 +173,169 @@ def getAngularSpeed(theta, timestamps):
     angspeed = np.concatenate((np.asarray([0]), angspeed))    
     
     return angspeed
-    
-     
-    
-def getTuningMap(spks, X, Z, timestamps, VRsize=(1,1), binsize=(0.025,0.025), 
+
+def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
                  sigma=3/2.5, speed_thres=0.025, boxcar_size=5, visit_thres=0.1,
-                 peak_thres=100, cell_id = None, datafolder=None):
+                 peak_thres=100, cell_id=None, datafolder=None, return_all=False):
     '''
-    plot the neural firing tuning map of a cell
+    Calculate the tuning map of a neuron
     Input:
-        spks: deconvolved calcium activity
-        X: x-position (np.array)
-        Z: y-position (np.array)
-        timestamps: (np.array)
-        VRsize: size of the virtual reality box (tuple)
-        binsize: size of the bins (tuple)
-        sigma: sigma of the Gaussian filter (float)
-        speed_thres: speed threshold (float)
-        boxcar_size: size of the boxcar window for smoothing the speed (int)
-        visit_thres: time threshold for a bin to be considered visited (float)
-    Output:
-        Firing_Rate_In_Position: the firing rate map (np.array)
-    Hyperparameter setting is inspired by this paper (Zong et al, 2022, Cell): https://www.sciencedirect.com/science/article/pii/S0092867422001970
+        spks: spike times
+        X: X position of the animal
+        Z: Z position of the animal
+        timestamps: time stamps of each frame
+        VRsize: size of the VR
+        binsize: size of the bin
+        sigma: sigma of the Gaussian filter
+        speed_thres: threshold of the speed
+        boxcar_size: size of the boxcar filter
+        visit_thres: threshold of the visit
+        peak_thres: threshold of the peak
+        cell_id: the id of the neuron
+        datafolder: the folder to save the plot
+        return_all: if True, also return all_calcium_mean and prob_visit
     '''
-    #1, calculate the smoothed moving speed
+    
+    
+    # 1, calculate the smoothed moving speed
     linearspeed = getLinearSpeed(X, Z, timestamps, boxcar_size=boxcar_size)
     
-    #2, removing period when animal's speed is below a threshold
-    
-    ind_thres = linearspeed>=speed_thres
-    
+    # 2, removing periods when the animal's speed is below a threshold
+    ind_thres = linearspeed >= speed_thres
     spks = spks[ind_thres]
     X = X[ind_thres]
     Z = Z[ind_thres]
     #calculate diffTimeStamps and add 0 at the beginning to make sure dimension does not change in one line
     diffTimeStamps =  np.concatenate((np.asarray([0]), np.diff(timestamps)))
     diffTimeStamps = diffTimeStamps[ind_thres]
+
+    # Calculate bin indices and remove edge effect
+    X[X == 1] = 1 - 1e-5
+    Z[Z == 1] = 1 - 1e-5
+    Pos_X = (X / binsize[0]).astype(int)
+    Pos_Z = (Z / binsize[1]).astype(int)
+
+    # Calculate Time_In_Position and Spks_In_Position using bin indices
+    n_bins_x = int(VRsize[0] / binsize[0])
+    n_bins_z = int(VRsize[1] / binsize[1])
     
-    #removing edge effect
-    X[X==1]=1-1e-5
-    Z[Z==1]=1-1e-5
-    Pos_X = np.int32(X/binsize[0])
-    Pos_Z = np.int32(Z/binsize[1])    
+    Time_In_Position = np.zeros((n_bins_z, n_bins_x))
+    Spks_In_Position = np.zeros((n_bins_z, n_bins_x))
     
-    # Here, the total time spent moving in each position bin 
-    # and the sumed amplitude of the deconvolved calcium activity in each position bin
-    # are calculated
-    Time_In_Position = np.zeros((np.int32(VRsize[0]/binsize[0]), np.int32(VRsize[1]/binsize[1])))
-    Spks_In_Position = np.zeros_like(Time_In_Position)
-    total_y_bins = np.int32(VRsize[0]/binsize[0])
-    for i in range(len(X)):
-        # Time_In_Position[total_y_bins-1-Pos_Z[i],Pos_X[i]] += diffTimeStamps[i]
-        # Spks_In_Position[total_y_bins-1-Pos_Z[i],Pos_X[i]] += spks[i]
-        Time_In_Position[Pos_Z[i],Pos_X[i]] += diffTimeStamps[i]
-        Spks_In_Position[Pos_Z[i],Pos_X[i]] += spks[i]
-           
-    #Here, I calculate the actual firing rate (calcium activty/time) and save it as Field_Data
-    Firing_Rate_In_Position = Spks_In_Position/(Time_In_Position+1e-5)
+    np.add.at(Time_In_Position, (Pos_Z, Pos_X), diffTimeStamps)
+    np.add.at(Spks_In_Position, (Pos_Z, Pos_X), spks)
+
+    # Here, I calculate the mean calcium activity and save it as ave_calcium_in_bin
+    ave_calcium_in_bin = np.divide(Spks_In_Position, (Time_In_Position + 1e-5))
     
-    #smooth the firing rate matrix with a Gaussian filter
-    Firing_Rate_In_Position = gaussian_filter(Firing_Rate_In_Position, sigma=sigma)
+    # Smooth the firing rate matrix with a Gaussian filter
+    ave_calcium_in_bin_gs = gaussian_filter(ave_calcium_in_bin, sigma=sigma)
     
-    #find Time_In_Position<visit_thres and set Firing_Rate_In_Position to np.nan
-    Firing_Rate_In_Position[Time_In_Position<visit_thres]=np.nan
+    # Find Time_In_Position < visit_thres and set Firing_Rate_In_Position to np.nan
+    ave_calcium_in_bin_gs[Time_In_Position < visit_thres] = np.nan
     
-    #plot the map only plot those peak values larger than peak_thres
-    if np.nanmax(Firing_Rate_In_Position)>peak_thres:
+    ave_calcium_in_bin_raw = ave_calcium_in_bin.copy()
+    ave_calcium_in_bin_raw[Time_In_Position < visit_thres] = np.nan
+    
+    # Plot the map only if those peak values are larger than peak_thres
+    if np.nanmax(ave_calcium_in_bin_gs) > peak_thres:
         plt.figure(figsize=(3, 3), dpi=300)
-        plt.imshow(Firing_Rate_In_Position, cmap='inferno')
+        plt.imshow(ave_calcium_in_bin_gs, cmap='inferno')
         plt.xlabel('VR X')
         plt.ylabel('VR Y')
-        plt.xticks(np.linspace(0, Firing_Rate_In_Position.shape[0], 5), np.linspace(0, 1, 5))
-        plt.yticks(np.linspace(0, Firing_Rate_In_Position.shape[1], 5), np.linspace(0, 1, 5))
+        plt.xticks(np.linspace(0, ave_calcium_in_bin_gs.shape[0], 5), np.linspace(0, 1, 5))
+        plt.yticks(np.linspace(0, ave_calcium_in_bin_gs.shape[1], 5), np.linspace(0, 1, 5))
         plt.colorbar(label='Calcium activity')
         
-        #save the figure
+        # Save the figure
         savefolder = os.path.join(datafolder, 'UnrotTiff/', '2D2P/', 'firingmaps/')
         if not os.path.exists(savefolder):
             os.makedirs(savefolder)
-        #save the plot
-        plt.savefig(os.path.join(savefolder, 'firingmap_'+str(cell_id)+'.png'))
-        plt.close()    
+        
+        # Save the plot
+        plt.savefig(os.path.join(savefolder, 'firingmap_' + str(cell_id) + '.png'))
+        plt.close()
     
-    return Firing_Rate_In_Position
+    if return_all:
+        all_calcium_mean = np.sum(Spks_In_Position) / np.sum(Time_In_Position)
+        prob_visit = Time_In_Position / np.sum(Time_In_Position)
+        prob_visit[Time_In_Position < visit_thres] = np.nan
+        
+        #cut the border for 5 pixels and keep the remaining 30*30 pixels
+        Spks_In_Position_cut = Spks_In_Position[5:-5,5:-5]
+        Time_In_Position_cut = Time_In_Position[5:-5,5:-5]
+        all_calcium_mean_cut = np.sum(Spks_In_Position_cut) / np.sum(Time_In_Position_cut)
+        ave_calcium_in_bin_raw_cut = ave_calcium_in_bin_raw[5:-5,5:-5]
+        prob_visit_cut = Time_In_Position_cut / np.sum(Time_In_Position_cut)
+        
+        return ave_calcium_in_bin_gs, ave_calcium_in_bin_raw, all_calcium_mean, prob_visit, ave_calcium_in_bin_raw_cut, all_calcium_mean_cut, prob_visit_cut
+    else:
+        return ave_calcium_in_bin_gs
+    
 
+def getTuningMap_shuffle(spks_shuffle, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
+                 sigma=3/2.5, speed_thres=0.025, boxcar_size=5, visit_thres=0.1, return_gaussian_filtered=False):
+    
+    n_shuffle = spks_shuffle.shape[0]
+    
+    # 1, calculate the smoothed moving speed
+    linearspeed = getLinearSpeed(X, Z, timestamps, boxcar_size=boxcar_size)
+    
+    # 2, removing periods when the animal's speed is below a threshold
+    ind_thres = linearspeed >= speed_thres
+    spks_shuffle = spks_shuffle[:,ind_thres]
+    X = X[ind_thres]
+    Z = Z[ind_thres]
+    #calculate diffTimeStamps and add 0 at the beginning to make sure dimension does not change in one line
+    diffTimeStamps =  np.concatenate((np.asarray([0]), np.diff(timestamps)))
+    diffTimeStamps = diffTimeStamps[ind_thres]
+
+    # Calculate bin indices and remove edge effect
+    X[X == 1] = 1 - 1e-5
+    Z[Z == 1] = 1 - 1e-5
+    Pos_X = (X / binsize[0]).astype(int)
+    Pos_Z = (Z / binsize[1]).astype(int)
+
+    # Calculate Time_In_Position and Spks_In_Position using bin indices
+    n_bins_x = int(VRsize[0] / binsize[0])
+    n_bins_z = int(VRsize[1] / binsize[1])
+    
+    Time_In_Position = np.zeros((n_shuffle, n_bins_z, n_bins_x))
+    Spks_In_Position = np.zeros((n_shuffle, n_bins_z, n_bins_x))
+    
+    # perform np.add.at for each shuffle
+    for i in range(n_shuffle):
+        np.add.at(Time_In_Position[i], (Pos_Z, Pos_X), diffTimeStamps)
+        np.add.at(Spks_In_Position[i], (Pos_Z, Pos_X), spks_shuffle[i])
+
+    # Here, I calculate the mean calcium activity and save it as ave_calcium_in_bin
+    ave_calcium_in_bin = np.divide(Spks_In_Position, (Time_In_Position + 1e-5))
+    
+    if return_gaussian_filtered:
+        #Gaussian filter along the last two dimensions of ave_calcium_in_bin
+        for i in range(n_shuffle):
+            ave_calcium_in_bin[i] = gaussian_filter(ave_calcium_in_bin[i], sigma=sigma)
+        ave_calcium_in_bin[Time_In_Position < visit_thres] = np.nan   
+        return ave_calcium_in_bin
+    
+    # Find Time_In_Position < visit_thres and set Firing_Rate_In_Position to np.nan
+    ave_calcium_in_bin[Time_In_Position < visit_thres] = np.nan
+        
+    
+    #calculate all_calcium_mean prob_visit for each shuffle
+    all_calcium_mean = np.sum(Spks_In_Position, axis=(1,2)) / np.sum(Time_In_Position, axis=(1,2))
+    
+    prob_visit = Time_In_Position / np.sum(Time_In_Position, axis=(1,2))[:,None,None]
+    prob_visit[Time_In_Position < visit_thres] = np.nan
+    
+    #cut the border for 5 pixels and keep the remaining 30*30 pixels
+    Spks_In_Position_cut = Spks_In_Position[:,5:-5,5:-5]
+    Time_In_Position_cut = Time_In_Position[:,5:-5,5:-5]
+    all_calcium_mean_cut = np.sum(Spks_In_Position_cut, axis=(1,2)) / np.sum(Time_In_Position_cut, axis=(1,2))
+    prob_visit_cut = Time_In_Position_cut / np.sum(Time_In_Position_cut, axis=(1,2))[:,None,None]
+    ave_calcium_in_bin_cut = ave_calcium_in_bin[:,5:-5,5:-5]
+    
+    return ave_calcium_in_bin, all_calcium_mean, prob_visit, ave_calcium_in_bin_cut, all_calcium_mean_cut, prob_visit_cut   
 
 def make_movie(images, meanImage, savefolder, moviename, boxcar_size=30, fs=30, Traj_x=None, Traj_y=None, ifmask=False):
     '''
