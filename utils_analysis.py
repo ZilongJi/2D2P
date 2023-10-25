@@ -2,11 +2,13 @@ import os
 import cv2
 import numpy as np
 import pickle
+from multiprocessing import Pool
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 
 from utils_io import get_imaging_files
 from scanimagetiffio import SITiffIO   
+
 
 def plot_trajectory(datafolder, filenamelist):
     '''
@@ -174,13 +176,79 @@ def getAngularSpeed(theta, timestamps):
     
     return angspeed
 
-def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
+def get_indices_circle(i, j, r, n_bins_z, n_bins_x):
+    """
+    get the indices of the circle with center (i,j) and radius r
+    """
+    #initialize the indices
+    ind = []
+    #for each row, get the indices of the circle
+    for row in range(i-r, i+r+1):
+        #for each column, get the indices of the circle
+        for col in range(j-r, j+r+1):
+            #if the point is within the circle, then append the index to ind
+            if (row-i)**2+(col-j)**2 <= r**2:
+                #if the point is out of the matrix, then skip
+                if row<0 or row>=n_bins_z or col<0 or col>=n_bins_x:
+                    continue
+                else:
+                    ind.append((row, col))
+    return ind
+
+def adaptive_binning(Spks_In_Position, Time_In_Position, fs=30, alpha=1e6):
+    """
+    adaptive binning technique
+    for each spatial bin, expanding a circle around this point until the floowing criteria is met:
+    N_spikes > alpha /(N_occ**2*r**2)
+    where N_occ is the number of occipancy samples falling within the circle, this equals to 
+    Time_In_Position falling within the circle multiplied by the sampling rate fs;
+    N_spikes is the number of spikes falling within the circle
+    The adaptive spikes equals to fs*N_spikes/N_occ
+
+    Args:
+        Spks_In_Position (_type_): _description_
+        Time_In_Position (_type_): _description_
+        fs (int, optional): _description_. Defaults to 30.
+        alpha (_type_, optional): _description_. Defaults to 1e6.
+
+    Returns:
+        adaptive_spikes: the adaptive spikes
+        radius_matrix: the radius of the circle for each spatial bin
+    """
+    #get the size of the matrix
+    n_bins_z, n_bins_x = Spks_In_Position.shape
+    #initialize adaptive_spikes matrix
+    adaptive_spikes = np.zeros((n_bins_z, n_bins_x))
+    #initialze radius matrix
+    radius_matrix = np.zeros((n_bins_z, n_bins_x))
+    #calculate the occupancy matrix
+    occ = Time_In_Position*fs
+    #for each bin, do the adaptive binning calculation
+    for i in range(n_bins_z):
+        for j in range(n_bins_x):
+            for r in range(1, n_bins_x):
+                #get the indices of the circle, ind is a list
+                ind = get_indices_circle(i, j, r, n_bins_z, n_bins_x)
+                #calculate the number of spikes and occupancy within the circle
+                #where ind is a list of tuples
+                N_spikes = np.sum([Spks_In_Position[tup] for tup in ind])
+                N_occ = np.sum([occ[tup] for tup in ind]) + 1e-5 #in case N_occ is 0
+                #if the criteria is met, save the adaptive_spikes then break the inner loop
+                if N_spikes > alpha/(N_occ**2*r**2):
+                    adaptive_spikes[i,j] = fs*N_spikes/N_occ
+                    radius_matrix[i,j] = r
+                    break
+
+    return adaptive_spikes, radius_matrix
+
+def getTuningMap(fr, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
                  sigma=3/2.5, speed_thres=0.025, boxcar_size=5, visit_thres=0.1,
-                 peak_thres=100, cell_id=None, datafolder=None, return_all=False):
+                 peak_thres=1, cell_id=None, datafolder=None, return_all=False,
+                 apply_adaptive_binning = True):
     '''
     Calculate the tuning map of a neuron
     Input:
-        spks: spike times
+        fr: firing rate of the neuron
         X: X position of the animal
         Z: Z position of the animal
         timestamps: time stamps of each frame
@@ -194,6 +262,7 @@ def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
         cell_id: the id of the neuron
         datafolder: the folder to save the plot
         return_all: if True, also return all_calcium_mean and prob_visit
+        apply_adaptive_binning: if True, apply adaptive binning
     '''
     
     
@@ -202,7 +271,7 @@ def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
     
     # 2, removing periods when the animal's speed is below a threshold
     ind_thres = linearspeed >= speed_thres
-    spks = spks[ind_thres]
+    fr = fr[ind_thres]
     X = X[ind_thres]
     Z = Z[ind_thres]
     #calculate diffTimeStamps and add 0 at the beginning to make sure dimension does not change in one line
@@ -215,18 +284,21 @@ def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
     Pos_X = (X / binsize[0]).astype(int)
     Pos_Z = (Z / binsize[1]).astype(int)
 
-    # Calculate Time_In_Position and Spks_In_Position using bin indices
+    # Calculate Time_In_Position and fr_In_Position using bin indices
     n_bins_x = int(VRsize[0] / binsize[0])
     n_bins_z = int(VRsize[1] / binsize[1])
     
     Time_In_Position = np.zeros((n_bins_z, n_bins_x))
-    Spks_In_Position = np.zeros((n_bins_z, n_bins_x))
+    fr_In_Position = np.zeros((n_bins_z, n_bins_x))
     
     np.add.at(Time_In_Position, (Pos_Z, Pos_X), diffTimeStamps)
-    np.add.at(Spks_In_Position, (Pos_Z, Pos_X), spks)
+    np.add.at(fr_In_Position, (Pos_Z, Pos_X), fr)
 
     # Here, I calculate the mean calcium activity and save it as ave_calcium_in_bin
-    ave_calcium_in_bin = np.divide(Spks_In_Position, (Time_In_Position + 1e-5))
+    if apply_adaptive_binning:
+        ave_calcium_in_bin, radius_matrix = adaptive_binning(fr_In_Position, Time_In_Position, fs=30, alpha=1e8)
+    else:
+        ave_calcium_in_bin = np.divide(fr_In_Position, (Time_In_Position + 1e-5))
     
     # Smooth the firing rate matrix with a Gaussian filter
     ave_calcium_in_bin_gs = gaussian_filter(ave_calcium_in_bin, sigma=sigma)
@@ -239,51 +311,84 @@ def getTuningMap(spks, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
     
     # Plot the map only if those peak values are larger than peak_thres
     if np.nanmax(ave_calcium_in_bin_gs) > peak_thres:
-        plt.figure(figsize=(3, 3), dpi=300)
-        plt.imshow(ave_calcium_in_bin_gs, cmap='inferno')
-        plt.xlabel('VR X')
-        plt.ylabel('VR Y')
-        plt.xticks(np.linspace(0, ave_calcium_in_bin_gs.shape[0], 5), np.linspace(0, 1, 5))
-        plt.yticks(np.linspace(0, ave_calcium_in_bin_gs.shape[1], 5), np.linspace(0, 1, 5))
-        plt.colorbar(label='Calcium activity')
         
         # Save the figure
         savefolder = os.path.join(datafolder, 'UnrotTiff/', '2D2P/', 'firingmaps/')
         if not os.path.exists(savefolder):
             os.makedirs(savefolder)
         
+        plt.figure(figsize=(3, 3), dpi=300)
+        labelsize = 10
+        ticksize = 8
+        #imshow the map
+        plt.imshow(ave_calcium_in_bin_gs, cmap='inferno')
+        #xlabel and ylabel
+        plt.xlabel('VR X', fontsize=labelsize)
+        plt.ylabel('VR Y', fontsize=labelsize)
+        plt.xticks([]); plt.yticks([])
+        #add colorbar and label in a latex format Dconv/F_0 /dot s^-1
+        cbar = plt.colorbar(label='$Dconv/F_0 \cdot s^{-1}$', shrink=0.8)
+        #remove colorbar ticks
+        cbar.set_ticks([])
+        #set tick labels size as ticksize
+        cbar.ax.tick_params(labelsize=labelsize)
+        #add peak value as text at the right top corner of the map, do not overlap with the map
+        #plt.text(0.5, 1.05, 'Peak={:.2f}'.format(np.nanmax(map)), fontsize=labelsize, transform=plt.gca().transAxes)
+        plt.title('Peak={:.2f}'.format(np.nanmax(ave_calcium_in_bin_gs)), fontsize=labelsize)
+        
         # Save the plot
         plt.savefig(os.path.join(savefolder, 'firingmap_' + str(cell_id) + '.png'))
         plt.close()
+        
+        #save the radius matrix as a image with colorbar
+        plt.figure(figsize=(3, 3), dpi=300)
+        plt.imshow(radius_matrix, cmap='inferno')
+        plt.xlabel('VR X', fontsize=labelsize)
+        plt.ylabel('VR Y', fontsize=labelsize)
+        plt.xticks([]); plt.yticks([])
+        plt.colorbar(label='Radius', shrink=0.8)
+
+        # Save the plot
+        plt.savefig(os.path.join(savefolder, 'radius_' + str(cell_id) + '.png'))
+        plt.close()
     
     if return_all:
-        all_calcium_mean = np.sum(Spks_In_Position) / np.sum(Time_In_Position)
+        all_calcium_mean = np.sum(fr_In_Position) / np.sum(Time_In_Position)
         prob_visit = Time_In_Position / np.sum(Time_In_Position)
         prob_visit[Time_In_Position < visit_thres] = np.nan
         
         #cut the border for 5 pixels and keep the remaining 30*30 pixels
-        Spks_In_Position_cut = Spks_In_Position[5:-5,5:-5]
+        fr_In_Position_cut = fr_In_Position[5:-5,5:-5]
         Time_In_Position_cut = Time_In_Position[5:-5,5:-5]
-        all_calcium_mean_cut = np.sum(Spks_In_Position_cut) / np.sum(Time_In_Position_cut)
+        all_calcium_mean_cut = np.sum(fr_In_Position_cut) / np.sum(Time_In_Position_cut)
         ave_calcium_in_bin_raw_cut = ave_calcium_in_bin_raw[5:-5,5:-5]
         prob_visit_cut = Time_In_Position_cut / np.sum(Time_In_Position_cut)
         
         return ave_calcium_in_bin_gs, ave_calcium_in_bin_raw, all_calcium_mean, prob_visit, ave_calcium_in_bin_raw_cut, all_calcium_mean_cut, prob_visit_cut
     else:
         return ave_calcium_in_bin_gs
-    
 
-def getTuningMap_shuffle(spks_shuffle, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
-                 sigma=3/2.5, speed_thres=0.025, boxcar_size=5, visit_thres=0.1, return_gaussian_filtered=False):
+# Function to calculate ave_calcium_in_bin for a single shuffle
+def process_shuffle(i, fr_In_Position, Time_In_Position, apply_adaptive_binning):
+    if apply_adaptive_binning:
+        ave_calcium_in_bin_shuffle, _ = adaptive_binning(fr_In_Position[i], Time_In_Position[i], fs=30, alpha=1e8)
+        return ave_calcium_in_bin_shuffle
+    else:
+        return np.divide(fr_In_Position[i], (Time_In_Position[i] + 1e-5))
+
+
+def getTuningMap_shuffle(fr_shuffle, X, Z, timestamps, VRsize=(1, 1), binsize=(0.025, 0.025),
+                 sigma=3/2.5, speed_thres=0.025, boxcar_size=5, visit_thres=0.1, return_gaussian_filtered=False,
+                 apply_adaptive_binning = True):
     
-    n_shuffle = spks_shuffle.shape[0]
+    n_shuffle = fr_shuffle.shape[0]
     
     # 1, calculate the smoothed moving speed
     linearspeed = getLinearSpeed(X, Z, timestamps, boxcar_size=boxcar_size)
     
     # 2, removing periods when the animal's speed is below a threshold
     ind_thres = linearspeed >= speed_thres
-    spks_shuffle = spks_shuffle[:,ind_thres]
+    fr_shuffle = fr_shuffle[:,ind_thres]
     X = X[ind_thres]
     Z = Z[ind_thres]
     #calculate diffTimeStamps and add 0 at the beginning to make sure dimension does not change in one line
@@ -296,20 +401,35 @@ def getTuningMap_shuffle(spks_shuffle, X, Z, timestamps, VRsize=(1, 1), binsize=
     Pos_X = (X / binsize[0]).astype(int)
     Pos_Z = (Z / binsize[1]).astype(int)
 
-    # Calculate Time_In_Position and Spks_In_Position using bin indices
+    # Calculate Time_In_Position and fr_In_Position using bin indices
     n_bins_x = int(VRsize[0] / binsize[0])
     n_bins_z = int(VRsize[1] / binsize[1])
     
     Time_In_Position = np.zeros((n_shuffle, n_bins_z, n_bins_x))
-    Spks_In_Position = np.zeros((n_shuffle, n_bins_z, n_bins_x))
+    fr_In_Position = np.zeros((n_shuffle, n_bins_z, n_bins_x))
     
     # perform np.add.at for each shuffle
     for i in range(n_shuffle):
         np.add.at(Time_In_Position[i], (Pos_Z, Pos_X), diffTimeStamps)
-        np.add.at(Spks_In_Position[i], (Pos_Z, Pos_X), spks_shuffle[i])
+        np.add.at(fr_In_Position[i], (Pos_Z, Pos_X), fr_shuffle[i])
 
-    # Here, I calculate the mean calcium activity and save it as ave_calcium_in_bin
-    ave_calcium_in_bin = np.divide(Spks_In_Position, (Time_In_Position + 1e-5))
+    # # Here, I calculate the mean calcium activity and save it as ave_calcium_in_bin
+    # if apply_adaptive_binning:
+    #     ave_calcium_in_bin = np.zeros((n_shuffle, n_bins_z, n_bins_x))
+    #     for i in range(n_shuffle):
+    #         ave_calcium_in_bin_shuffle, _ = adaptive_binning(fr_In_Position[i], Time_In_Position[i], fs=30, alpha=1e8)
+    #         ave_calcium_in_bin[i] = ave_calcium_in_bin_shuffle
+    # else:
+    #     ave_calcium_in_bin = np.divide(fr_In_Position, (Time_In_Position + 1e-5))
+
+    with Pool(processes=16) as pool:
+        # Use partial from functools to pass additional arguments to process_shuffle
+        import functools
+        process_shuffle_partial = functools.partial(process_shuffle, fr_In_Position=fr_In_Position, Time_In_Position=Time_In_Position, apply_adaptive_binning=apply_adaptive_binning)
+        ave_calcium_in_bin = pool.map(process_shuffle_partial, range(n_shuffle))
+
+    #convert ave_calcium_in_bin to numpy array
+    ave_calcium_in_bin = np.array(ave_calcium_in_bin)
     
     if return_gaussian_filtered:
         #Gaussian filter along the last two dimensions of ave_calcium_in_bin
@@ -323,15 +443,15 @@ def getTuningMap_shuffle(spks_shuffle, X, Z, timestamps, VRsize=(1, 1), binsize=
         
     
     #calculate all_calcium_mean prob_visit for each shuffle
-    all_calcium_mean = np.sum(Spks_In_Position, axis=(1,2)) / np.sum(Time_In_Position, axis=(1,2))
+    all_calcium_mean = np.sum(fr_In_Position, axis=(1,2)) / np.sum(Time_In_Position, axis=(1,2))
     
     prob_visit = Time_In_Position / np.sum(Time_In_Position, axis=(1,2))[:,None,None]
     prob_visit[Time_In_Position < visit_thres] = np.nan
     
     #cut the border for 5 pixels and keep the remaining 30*30 pixels
-    Spks_In_Position_cut = Spks_In_Position[:,5:-5,5:-5]
+    fr_In_Position_cut = fr_In_Position[:,5:-5,5:-5]
     Time_In_Position_cut = Time_In_Position[:,5:-5,5:-5]
-    all_calcium_mean_cut = np.sum(Spks_In_Position_cut, axis=(1,2)) / np.sum(Time_In_Position_cut, axis=(1,2))
+    all_calcium_mean_cut = np.sum(fr_In_Position_cut, axis=(1,2)) / np.sum(Time_In_Position_cut, axis=(1,2))
     prob_visit_cut = Time_In_Position_cut / np.sum(Time_In_Position_cut, axis=(1,2))[:,None,None]
     ave_calcium_in_bin_cut = ave_calcium_in_bin[:,5:-5,5:-5]
     

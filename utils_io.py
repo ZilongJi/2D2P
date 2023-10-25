@@ -26,7 +26,7 @@ def get_imaging_files(datafolder, namelist, readVRlogs=True):
     RElogfiles = glob.glob(datafolder + "/RE*.txt")
     #remove RElogfiles with key words "stack"
     RElogfiles = [x for x in RElogfiles if "stack" not in x]
-
+    
     #get all the VRlog files under the parent folder begin with numbers and with an extension of .txt
     VRlogfiles = glob.glob(datafolder + "/[0-9]*.txt")
 
@@ -36,6 +36,7 @@ def get_imaging_files(datafolder, namelist, readVRlogs=True):
         #extract the key word from the tifffile
         #for example, '/home/zilong/Desktop/2D2P/Data/183_25072023/25072023_00005.tif' then extract '00005'
         key = tifffile.split("/")[-1].split(".")[0].split("_")[-1]
+
         #find the RElogfile containing the key word
         RElogfile = [x for x in RElogfiles if key in x][0]
         if readVRlogs:
