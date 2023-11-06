@@ -109,5 +109,9 @@ def get_deltaF_F_and_fr(spks, Fcorr, moving_window=15, framerate=30, percetile=8
         else:
             deltaF_F[i,:] = (Fcorr[i,:]-F0[i,:])/F0[i,:]
             fr[i,:] = spks[i,:]/F0[i,:]
-        
+
+    #for each row in fr, if the abs value exceed 50, set to 50,; also set negative value to zero
+    fr[fr>50] = 0
+    fr[fr<0] = 0
+            
     return deltaF_F, fr
