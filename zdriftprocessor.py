@@ -98,8 +98,10 @@ class ZdriftProcessor(tk.Frame):
         S.open_tiff_file(self.tifffilename, "r")
         S.open_rotary_file(self.relogfilename)
         #extract the last self.numFrames frames from the tiff file
+        #print int(self.numFrames.get()
+        print(int(self.numFrames.get()))
         tailArray, tailAng = S.tail(int(self.numFrames.get()))
-               
+        # tailArray, tailAng = S.tail(500)      
         # unrotate each frame in the tiff file with the detected rotation center
         self.unrotFrames  = UnrotateCropFrame(tailArray, tailAng, rotCenter=[self.rotx, self.roty])
         
