@@ -1,20 +1,20 @@
 # newzdriftprocessor.py
 #
 # Contains the NewZdriftProcessor class for automated, continuous Z-drift analysis
-# using a single, trigger-synchronized master RElog file.
-# UPDATED: Now includes robust parsing for the specific RElog format and improved
-# sequential trigger-to-TIFF matching.
+# using paired TIFF and RElog files detected in watch folders.
 
 import os
 import numpy as np
-import pandas as pd
 from scipy.ndimage import gaussian_filter1d, gaussian_filter
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import tkinter as tk
 from tkinter import filedialog, ttk
 import time
 import threading
+from collections import deque
 
 from PIL import Image, ImageTk
 
@@ -27,6 +27,7 @@ class NewZdriftProcessor(tk.Frame):
         super().__init__(master)
         self.master = master
         self.folder_to_watch = folder
+        self.relog_folder_to_watch = folder
         self.app = app
         self.grid()
         
@@ -35,12 +36,12 @@ class NewZdriftProcessor(tk.Frame):
         self.monitoring_active = False
         self.monitoring_thread = None
         self.processed_files = set()
-        self.master_relog_path = None
-        self.master_relog_data = None # Will hold the parsed pandas DataFrame
-        self.master_relog_trigger_times = []
-        
-        ### UPDATED/CORRECTED ### Keeps track of the last used trigger to ensure sequential matching
-        self.last_used_trigger_index = -1
+        self.processed_relog_files = set()
+        self.pending_tiffs = deque()
+        self.pending_relogs = deque()
+        self.pending_lock = threading.Lock()
+        self.analysis_running = False
+        self._monitoring_poll_job = None
 
         self.create_widgets()
         self.create_canvas_reg()      
@@ -62,29 +63,33 @@ class NewZdriftProcessor(tk.Frame):
         # --- Automatic Monitoring ---
         tk.Label(self, text="--- Automatic Monitoring ---").grid(row=5, column=0, columnspan=2, pady=(10, 5))
         
-        tk.Button(self, text="Select Master RElog File", command=self.select_master_relog).grid(row=6, column=0, columnspan=2)
-        self.master_relog_label = tk.Label(self, text="No RElog file selected", fg="red")
-        self.master_relog_label.grid(row=7, column=0, columnspan=2)
+        tk.Button(self, text="Select TIFF Directory", command=self.select_tiff_directory).grid(row=6, column=0, columnspan=2)
+        self.tiff_dir_label = tk.Label(self, text="No TIFF directory selected", fg="red")
+        self.tiff_dir_label.grid(row=7, column=0, columnspan=2)
+        
+        tk.Button(self, text="Select RElog Directory", command=self.select_relog_directory).grid(row=8, column=0, columnspan=2)
+        self.relog_dir_label = tk.Label(self, text="No RElog directory selected", fg="red")
+        self.relog_dir_label.grid(row=9, column=0, columnspan=2)
         
         self.start_button = tk.Button(self, text="Start Monitoring", command=self.start_monitoring)
-        self.start_button.grid(row=8, column=0)
+        self.start_button.grid(row=10, column=0)
         
         self.stop_button = tk.Button(self, text="Stop Monitoring", command=self.stop_monitoring, state=tk.DISABLED)
-        self.stop_button.grid(row=8, column=1)
+        self.stop_button.grid(row=10, column=1)
 
     def create_canvas_reg(self):
         self.canvas_reg = tk.Canvas(self, width=512, height=512, bg="#4D4D4D")
-        self.canvas_reg.grid(row=9, column=0, columnspan=2)
+        self.canvas_reg.grid(row=11, column=0, columnspan=2)
         
     def create_canvas_corr(self):
         self.canvas_corr = tk.Canvas(self, width=512, height=256, bg="white")
-        self.canvas_corr.grid(row=10, column=0, columnspan=2)
+        self.canvas_corr.grid(row=12, column=0, columnspan=2)
 
     def create_progress_bar(self):
         self.progress_label = tk.Label(self, text="Status: Idle")
-        self.progress_label.grid(row=11, column=0, columnspan=2, sticky="w", padx=5)
+        self.progress_label.grid(row=13, column=0, columnspan=2, sticky="w", padx=5)
         self.progress_bar = ttk.Progressbar(self, orient="horizontal", length=500, mode="determinate")
-        self.progress_bar.grid(row=12, column=0, columnspan=2, pady=5, padx=5)
+        self.progress_bar.grid(row=14, column=0, columnspan=2, pady=5, padx=5)
 
     def import_tiff(self):
         self.tifffilename = filedialog.askopenfilename(
@@ -103,14 +108,22 @@ class NewZdriftProcessor(tk.Frame):
         if self.app and self.relogfilename:
             self.app.log_message(f"Imported manual RElog file: {self.relogfilename}")
 
-    def select_master_relog(self):
-        path = filedialog.askopenfilename(
-            initialdir=self.folder_to_watch, title="Select the MASTER RElog file for the session", filetypes=[("txt files", "*.txt")]
-        )
+    def select_tiff_directory(self):
+        path = filedialog.askdirectory(initialdir=self.folder_to_watch, title="Select TIFF directory")
         if path:
-            self.master_relog_path = path
-            self.master_relog_label.config(text=os.path.basename(path), fg="green")
-            self.app.log_message(f"Master RElog file selected: {path}")
+            self.folder_to_watch = path
+            self.DPFolder = os.path.join(self.folder_to_watch, "DP")
+            self.tiff_dir_label.config(text=path, fg="green")
+            if self.app:
+                self.app.log_message(f"TIFF directory selected: {path}")
+
+    def select_relog_directory(self):
+        path = filedialog.askdirectory(initialdir=self.relog_folder_to_watch, title="Select RElog directory")
+        if path:
+            self.relog_folder_to_watch = path
+            self.relog_dir_label.config(text=path, fg="green")
+            if self.app:
+                self.app.log_message(f"RElog directory selected: {path}")
 
     def manual_correlation_analysis(self):
         if not hasattr(self, 'tifffilename') or not hasattr(self, 'relogfilename'):
@@ -119,59 +132,26 @@ class NewZdriftProcessor(tk.Frame):
         threading.Thread(target=self.run_full_analysis, args=(self.tifffilename, self.relogfilename), daemon=True).start()
 
     def start_monitoring(self):
+        if not hasattr(self, "DPFolder"):
+            self.app.log_message("Error: Please select the TIFF directory before starting.")
+            return
+        if not self.relog_folder_to_watch:
+            self.app.log_message("Error: Please select the RElog directory before starting.")
+            return
         if not os.path.exists(os.path.join(self.DPFolder, 'meanstacks.npy')):
             self.app.log_message("Error: Calibration data (DP/meanstacks.npy) not found.")
-            return
-        if not self.master_relog_path:
-            self.app.log_message("Error: Please select the Master RElog file before starting.")
-            return
-
-        ### UPDATED/CORRECTED ### New, robust parsing logic for the specific RElog format.
-        try:
-            self.app.log_message("Parsing Master RElog for trigger events...")
-            
-            # Use a regular expression to split the complex line format
-            # This splits on one or more spaces, OR the '=' sign surrounded by optional spaces.
-            df = pd.read_csv(self.master_relog_path, sep=r'\s*=\s*|\s+', header=None, engine='python')
-            
-            # Combine the first two columns (date and time) into a single datetime object
-            timestamps = pd.to_datetime(df[0] + ' ' + df[1])
-            
-            # Extract the angle and trigger values, which are in the 4th and 6th columns
-            angles = df[3].astype(float)
-            triggers = df[5].astype(float)
-            
-            # Create a clean, final DataFrame
-            self.master_relog_data = pd.DataFrame({
-                'timestamp': timestamps,
-                'angle': angles,
-                'trigger': triggers
-            })
-            
-            # Find the start of each trigger block (where trigger goes from 0 to 1)
-            trigger_series = self.master_relog_data['trigger']
-            start_indices = np.where((trigger_series.iloc[:-1].values == 0) & (trigger_series.iloc[1:].values == 1.0))[0] + 1
-            
-            if len(start_indices) == 0:
-                raise ValueError("No 'Trigger=1.0' start events (0->1 transition) found.")
-
-            # Store the datetime objects of these trigger starts
-            self.master_relog_trigger_times = self.master_relog_data['timestamp'].iloc[start_indices].tolist()
-            
-            self.app.log_message(f"Successfully parsed RElog. Found {len(self.master_relog_trigger_times)} trigger events.")
-            
-        except Exception as e:
-            self.app.log_message(f"FATAL: Error parsing master RElog file: {e}")
-            self.app.log_message("Please check the RElog file format. Stopping.")
             return
 
         # Reset state for a new monitoring session
         self.monitoring_active = True
         self.processed_files = set(f for f in os.listdir(self.folder_to_watch) if f.endswith('.tif'))
-        self.last_used_trigger_index = -1
+        self.processed_relog_files = set(f for f in os.listdir(self.relog_folder_to_watch) if f.endswith('.txt'))
+        self.pending_tiffs = deque()
+        self.pending_relogs = deque()
         
         self.monitoring_thread = threading.Thread(target=self._monitor_folder_loop, daemon=True)
         self.monitoring_thread.start()
+        self._start_polling_pending_pairs()
         
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
@@ -180,6 +160,9 @@ class NewZdriftProcessor(tk.Frame):
 
     def stop_monitoring(self):
         self.monitoring_active = False
+        if self._monitoring_poll_job is not None:
+            self.after_cancel(self._monitoring_poll_job)
+            self._monitoring_poll_job = None
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.app.log_message("Monitoring stopped.")
@@ -189,16 +172,26 @@ class NewZdriftProcessor(tk.Frame):
         while self.monitoring_active:
             try:
                 all_tiffs = {f for f in os.listdir(self.folder_to_watch) if f.endswith('.tif')}
-                new_tiffs = sorted(list(all_tiffs - self.processed_files)) # Sort to process in order
+                all_relogs = {f for f in os.listdir(self.relog_folder_to_watch) if f.endswith('.txt')}
+                new_tiffs = sorted(list(all_tiffs - self.processed_files))
+                new_relogs = sorted(list(all_relogs - self.processed_relog_files))
 
                 for tiff_name in new_tiffs:
                     tiff_path = os.path.join(self.folder_to_watch, tiff_name)
                     if self._is_file_complete(tiff_path):
-                        self.app.log_message(f"File {tiff_name} is complete. Starting analysis.")
-                        self.run_full_analysis(tiff_path)
+                        with self.pending_lock:
+                            self.pending_tiffs.append(tiff_path)
                         self.processed_files.add(tiff_name)
-                
-                
+                        self.app.log_message(f"Detected new TIFF: {tiff_name}")
+
+                for relog_name in new_relogs:
+                    relog_path = os.path.join(self.relog_folder_to_watch, relog_name)
+                    if self._is_file_complete(relog_path):
+                        with self.pending_lock:
+                            self.pending_relogs.append(relog_path)
+                        self.processed_relog_files.add(relog_name)
+                        self.app.log_message(f"Detected new RElog: {relog_name}")
+
                 time.sleep(5)
             except Exception as e:
                 self.app.log_message(f"An error occurred in monitoring thread: {e}")
@@ -219,39 +212,34 @@ class NewZdriftProcessor(tk.Frame):
         self.progress_label['text'] = f"Status: {text}"
         self.master.update_idletasks()
 
-    ### UPDATED/CORRECTED ### Improved synchronization using a sequential trigger index.
-    def _synchronize_with_master_relog(self, tiff_sio_obj):
-        """Finds the next available trigger and sets the corresponding data segment."""
-        next_trigger_index = self.last_used_trigger_index + 1
-        
-        if next_trigger_index >= len(self.master_relog_trigger_times):
-            self.app.log_message(f"Warning: No more trigger events available in RElog file. Cannot process new TIFFs.")
-            return False
-        
-        # Get the start time for the current data segment
-        segment_start_time = self.master_relog_trigger_times[next_trigger_index]
-        self.app.log_message(f"Matching TIFF to trigger event #{next_trigger_index + 1} at: {segment_start_time.strftime('%Y-%m-%d %H:%M:%S.%f')}")
+    def _start_polling_pending_pairs(self):
+        if self._monitoring_poll_job is None:
+            self._monitoring_poll_job = self.after(500, self._poll_pending_pairs)
 
-        # Find the end of the segment (the start of the *next* trigger, or the end of the file)
-        if next_trigger_index + 1 < len(self.master_relog_trigger_times):
-            segment_end_time = self.master_relog_trigger_times[next_trigger_index + 1]
-        else:
-            segment_end_time = self.master_relog_data['timestamp'].iloc[-1]
-        
-        # Extract the data segment using pandas boolean indexing
-        segment_df = self.master_relog_data[
-            (self.master_relog_data['timestamp'] >= segment_start_time) & 
-            (self.master_relog_data['timestamp'] < segment_end_time)
-        ]
-        
-        # Inject the synchronized data into the SITiffIO object
-        # NOTE: SITiffIO expects columns named 'timestamp' and 'angle'
-        tiff_sio_obj.rotary_data = segment_df[['timestamp', 'angle']].copy()
-        
-        # Crucially, update the index so the next file uses the next trigger
-        self.last_used_trigger_index = next_trigger_index
-        
-        return True
+    def _poll_pending_pairs(self):
+        if not self.monitoring_active:
+            self._monitoring_poll_job = None
+            return
+
+        tiff_path = None
+        relog_path = None
+        if not self.analysis_running:
+            with self.pending_lock:
+                if self.pending_tiffs and self.pending_relogs:
+                    tiff_path = self.pending_tiffs.popleft()
+                    relog_path = self.pending_relogs.popleft()
+
+            if tiff_path and relog_path:
+                self.analysis_running = True
+                try:
+                    self.app.log_message(
+                        f"Pairing TIFF {os.path.basename(tiff_path)} with RElog {os.path.basename(relog_path)}."
+                    )
+                    self.run_full_analysis(tiff_path, relog_path)
+                finally:
+                    self.analysis_running = False
+
+        self._monitoring_poll_job = self.after(500, self._poll_pending_pairs)
 
     def run_full_analysis(self, tiff_path, relog_path=None):
         self._update_progress(5, f"Processing {os.path.basename(tiff_path)}...")
@@ -263,11 +251,7 @@ class NewZdriftProcessor(tk.Frame):
         S = SITiffIO()
         S.open_tiff_file(tiff_path, "r")
         
-        if self.monitoring_active and not relog_path:
-            if not self._synchronize_with_master_relog(S):
-                self._update_progress(0, "Status: Synchronization failed.")
-                return
-        elif relog_path:
+        if relog_path:
             S.open_rotary_file(relog_path)
         else:
             self.app.log_message("Error: No RElog data available for analysis.")
