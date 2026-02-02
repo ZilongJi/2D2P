@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
-from scanimagetiffio import SITiffIO
+# from scanimagetiffio import SITiffIO
 from utils_image import getMeanTiff_randomsampling, getMeanTiff_equalsampling
 
 class CenterDetector(tk.Frame):

@@ -19,7 +19,7 @@ from collections import deque
 from PIL import Image, ImageTk
 
 import suite2p
-from scanimagetiffio import SITiffIO
+# from scanimagetiffio import SITiffIO
 from utils_image import UnrotateCropFrame, RegFrame, compute_zpos_sp, findFOV
 
 class NewZdriftProcessor(tk.Frame):

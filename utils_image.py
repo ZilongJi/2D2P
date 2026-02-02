@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import suite2p
 from suite2p.registration import register, rigid
 
-from scanimagetiffio import SITiffIO
+# from scanimagetiffio import SITiffIO
 from utils_io import get_imaging_files, get_rotary_center
 
 def getMeanTiff_randomsampling(S, frac=0.1):
