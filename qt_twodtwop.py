@@ -21,6 +21,12 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
 
         self.tabs = QtWidgets.QTabWidget()
         self.setCentralWidget(self.tabs)
+        self.setStyleSheet(
+            "QWidget { font-family: Arial, 'Segoe UI', sans-serif; }"
+            "QPushButton { font-size: 11pt; padding: 6px 10px; }"
+            "QLabel { font-size: 10.5pt; }"
+            "QLineEdit { font-size: 10.5pt; padding: 4px; }"
+        )
 
         self.center_panel = QtCenterDetector(folder=self.folder, app=self)
         self.tabs.addTab(self.center_panel, "Center Detector")
@@ -39,6 +45,17 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
         )
         self.log_text = QtWidgets.QPlainTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setStyleSheet(
+            "QPlainTextEdit {"
+            "background-color: #0f172a;"
+            "color: #e2e8f0;"
+            "border: 1px solid #1e293b;"
+            "border-radius: 6px;"
+            "font-family: Arial, 'Segoe UI', sans-serif;"
+            "font-size: 11pt;"
+            "padding: 6px;"
+            "}"
+        )
         dock.setWidget(self.log_text)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
 

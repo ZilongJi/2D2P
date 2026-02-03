@@ -14,7 +14,27 @@ from suite2p.registration import register, rigid
 # from scanimagetiffio import SITiffIO
 from utils_io import get_imaging_files, get_rotary_center
 
-def getMeanTiff_randomsampling(S, frac=0.1):
+def getMeantiff(data, frac=1.0):
+    """
+    Compute mean frame by randomly sampling a fraction of frames from a 3D array.
+    Input:
+        data: np.ndarray with shape [n_frames, height, width]
+        frac: fraction of frames to average over (0 < frac <= 1)
+    Output:
+        meanframe (np.array, int16): the mean frame
+    """
+    if data is None or data.ndim != 3:
+        raise ValueError("data must be a 3D numpy array [n_frames, height, width]")
+    if frac <= 0 or frac > 1:
+        raise ValueError("frac must be in (0, 1]")
+
+    nframes = data.shape[0]
+    num = max(1, int(nframes * frac))
+    indexs = np.random.choice(nframes, num, replace=False)
+    meanframe = data[indexs].mean(axis=0)
+    return meanframe.astype(np.int16)
+
+def getMeanTiff_randomsampling(S, frac):
     """
     get the mean frame by averaging over recording per steps
     get the median value of the mean frame if return_median=True, for histogram matching purpose
