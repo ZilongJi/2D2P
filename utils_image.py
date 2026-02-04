@@ -34,6 +34,73 @@ def getMeantiff(data, frac=1.0):
     meanframe = data[indexs].mean(axis=0)
     return meanframe.astype(np.int16)
 
+def get_meanframe_from_Zstacks(data, volume, stacks, frames, Rotcenter, ImgReg=False):
+    """
+    get the mean frame of Zstacks
+    Args:
+        Sdata: array of shape [n_frames, height, width]
+        volume [int]: volume of the Zstack
+        stacks [int]: number of stacks
+        frames [int]: number of frames
+        Rotcenter [x,y list]: rotation center
+        ImgReg [bool]: if True, do image registration
+    Return:
+        meanZstack [stacks*Ly*Lx]: the mean frame of Zstack
+    """
+    print("Extract the mean frame of Zstacks...")
+    
+    #count the time for the function
+    t0 = time.time()
+
+    Angles = S.get_all_theta()
+    
+    #figure out the size of the cropped image
+    frame1 = S.get_frame(1)
+    angle1 = Angles[0]
+    UnrotFrame1 = Image.fromarray(frame1).rotate(angle1, center=Rotcenter)
+    croppedFrame1 = cropLargestRecT(UnrotFrame1, Rotcenter)
+    w, h = croppedFrame1.size
+    
+    #generate an empty array to store the mean frame of Zstack
+    meanZstacks = np.zeros((stacks, h, w))
+    
+    #loop through all the stacks
+    for stack_i in range(stacks):
+        print("Processing stack {}".format(stack_i))
+        #create a temporary array to store all the frames in the current stack
+        temp_stack_frames = np.zeros((volume*frames, w, h), dtype=np.int16)
+        
+        #get all the index of the frames belonging to the current stack
+        #init an empty array to store the index
+        inds = np.zeros((volume*frames), dtype=np.int32)
+        for vi in range(volume):
+            ind_in_vloume = vi*stacks*frames+np.arange(stack_i*frames,(stack_i+1)*frames,1)
+            inds[vi*frames:(vi+1)*frames] = ind_in_vloume
+    
+        #loop through the index and get the frames
+        for i,ind in enumerate(inds):
+            #get the frame, unrotate and crop
+            frame_i = S.get_frame(ind+1)
+            angle_i = Angles[ind]
+            UnrotFrame_i = Image.fromarray(frame_i).rotate(angle_i, center=Rotcenter)
+            croppedFrame_i = cropLargestRecT(UnrotFrame_i, Rotcenter)
+            croppedFrame_i = np.array(croppedFrame_i, dtype=np.int16)
+
+            #add the current frame to temp_stack
+            temp_stack_frames[i] = croppedFrame_i
+            
+        #do image registration if ImgReg is True
+        if ImgReg:
+            meanImg, _ = RegFrame(temp_stack_frames)
+        else:
+            meanImg = np.mean(temp_stack_frames, axis=0)
+        
+        meanZstacks[stack_i] = np.int16(meanImg)
+        
+    print("Getting the mean Z stack frames -- Done! Time used: {}".format(time.time()-t0))
+    
+    return meanZstacks
+
 def getMeanTiff_randomsampling(S, frac):
     """
     get the mean frame by averaging over recording per steps

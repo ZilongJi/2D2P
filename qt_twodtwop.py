@@ -2,6 +2,7 @@ import sys
 from PyQt5 import QtCore, QtWidgets
 
 from qt_centerdetector import QtCenterDetector
+from qt_stackprocessor import QtStackProcessor
 
 
 class PlaceholderPanel(QtWidgets.QWidget):
@@ -31,7 +32,8 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
         self.center_panel = QtCenterDetector(folder=self.folder, app=self)
         self.tabs.addTab(self.center_panel, "Center Detector")
 
-        self.tabs.addTab(PlaceholderPanel("Stack Processor"), "Stack Processor")
+        self.stack_panel = QtStackProcessor(folder=self.folder, app=self)
+        self.tabs.addTab(self.stack_panel, "Stack Processor")
         self.tabs.addTab(PlaceholderPanel("Z-Drift Monitor"), "Z-Drift Monitor")
 
         self._build_log_dock()

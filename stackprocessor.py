@@ -17,6 +17,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk, ImageDraw
 from utils_image import get_meanZstack
 # from scanimagetiffio import SITiffIO
+import tifffile
 
 class StackProcessor(tk.Frame):
     def __init__(self, master=None, folder=None, app=None):
