@@ -20,13 +20,52 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
         self.folder = folder
         self.setWindowTitle("2D2P Automated Z-Drift Corrector (Qt)")
 
+        central = QtWidgets.QWidget()
+        central_layout = QtWidgets.QVBoxLayout(central)
+        central_layout.setContentsMargins(6, 6, 6, 6)
+        central_layout.setSpacing(6)
+
+        top_bar = QtWidgets.QHBoxLayout()
+        self.set_folder_btn = QtWidgets.QPushButton("Set Data Folder")
+        self.set_folder_btn.setStyleSheet(
+            "QPushButton {"
+            "background-color: #2563eb;"
+            "color: white;"
+            "font-weight: 600;"
+            "padding: 6px 12px;"
+            "border-radius: 4px;"
+            "}"
+            "QPushButton:hover { background-color: #1d4ed8; }"
+            "QPushButton:pressed { background-color: #1e40af; }"
+        )
+        self.set_folder_btn.clicked.connect(self.select_data_folder)
+        self.folder_label = QtWidgets.QLabel(self.folder)
+        self.folder_label.setStyleSheet("QLabel { color: #334155; }")
+        top_bar.addWidget(self.set_folder_btn)
+        top_bar.addWidget(self.folder_label, 1)
+
         self.tabs = QtWidgets.QTabWidget()
-        self.setCentralWidget(self.tabs)
+
+        central_layout.addLayout(top_bar)
+        central_layout.addWidget(self.tabs)
+        self.setCentralWidget(central)
         self.setStyleSheet(
             "QWidget { font-family: Arial, 'Segoe UI', sans-serif; }"
             "QPushButton { font-size: 11pt; padding: 6px 10px; }"
             "QLabel { font-size: 10.5pt; }"
             "QLineEdit { font-size: 10.5pt; padding: 4px; }"
+            "QTabBar::tab {"
+            "font-size: 12pt;"
+            "padding: 8px 14px;"
+            "min-width: 170px;"
+            "border: 1px solid #cbd5f5;"
+            "}"
+            "QTabBar::tab:first { background: #93c5fd; }"
+            "QTabBar::tab:middle { background: #86efac; }"
+            "QTabBar::tab:last { background: #fde68a; }"
+            "QTabBar::tab:selected {"
+            "border: 1px solid #94a3b8;"
+            "}"
         )
 
         self.center_panel = QtCenterDetector(folder=self.folder, app=self)
@@ -65,10 +104,23 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
         self.log_text.appendPlainText(message)
         self.log_text.appendPlainText("-" * 20)
 
+    def select_data_folder(self):
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select Data Folder", self.folder or ""
+        )
+        if not path:
+            return
+        self.folder = path
+        self.folder_label.setText(path)
+        if hasattr(self.center_panel, "set_folder"):
+            self.center_panel.set_folder(path)
+        if hasattr(self.stack_panel, "set_folder"):
+            self.stack_panel.set_folder(path)
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    folder_path = "C:/Users/BurgessLab/Desktop/SM2PCode/2D2P/Data"
+    folder_path = "D:/data/"
     window = TwoDTwoPQt(folder_path)
     window.resize(1200, 800)
     window.show()

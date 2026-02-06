@@ -67,6 +67,9 @@ class QtCenterDetector(QtWidgets.QWidget):
     def log_message(self, message):
         if self.app is not None:
             self.app.log_message(message)
+        
+    def set_folder(self, folder):
+        self.folder = folder
 
     def import_tiff(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(

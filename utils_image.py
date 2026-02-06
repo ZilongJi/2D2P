@@ -52,7 +52,7 @@ def get_meanframe_from_Zstacks(data, volume, stacks, frames, Rotcenter, ImgReg=F
     #count the time for the function
     t0 = time.time()
 
-    Angles = S.get_all_theta()
+    # Angles = xxx?
     
     #figure out the size of the cropped image
     frame1 = S.get_frame(1)

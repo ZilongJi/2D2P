@@ -71,6 +71,164 @@ def get_rotary_center(centerfile):
     rotCenter = [rotx, roty]
     
     return rotCenter
+
+import tifffile as tiff
+import numpy as np
+import re
+import datetime as dt
+
+_num_re = re.compile(r"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$")
+
+
+def _parse_value(v: str):
+    v = v.strip()
+
+    if v == "[]":
+        return []
+    if v == "{}":
+        return {}
+
+    # Bracket array like: [2023  7 27 16  9 18.354]
+    if v.startswith("[") and v.endswith("]"):
+        inner = v[1:-1].strip()
+        if inner == "":
+            return []
+        parts = re.split(r"[\s,]+", inner)
+        out = []
+        for p in parts:
+            if not p:
+                continue
+            if _num_re.match(p):
+                out.append(int(p) if re.match(r"^[+-]?\d+$", p) else float(p))
+            else:
+                out.append(p)
+        return out
+
+    if _num_re.match(v):
+        return int(v) if re.match(r"^[+-]?\d+$", v) else float(v)
+
+    return v
+
+
+def parse_scanimage_description(desc: str) -> dict:
+    """
+    Parse ScanImage per-frame ImageDescription text into a dict.
+    Only parses the first block before '---'.
+    """
+    d = {}
+    block = desc.split('---', 1)[0]
+    for line in block.splitlines():
+        line = line.strip()
+        if not line or line.startswith('%') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        d[k.strip()] = _parse_value(v)
+    return d
+
+
+def _epoch_list_to_datetime(epoch_list):
+    """
+    epoch_list format: [Y, M, D, h, m, s.sss]
+    """
+    if not isinstance(epoch_list, (list, tuple)) or len(epoch_list) < 6:
+        raise ValueError(f"Invalid epoch format: {epoch_list}")
+
+    Y, M, D, h, m, sec = epoch_list[:6]
+    sec_float = float(sec)
+    sec_int = int(sec_float)
+    usec = int(round((sec_float - sec_int) * 1_000_000.0))
+
+    # handle rounding overflow (e.g. 18.9999996 -> 19.000000)
+    if usec >= 1_000_000:
+        sec_int += 1
+        usec -= 1_000_000
+
+    return dt.datetime(int(Y), int(M), int(D), int(h), int(m), int(sec_int), usec)
+
+
+def get_scanimage_frame_times(path_tif: str):
+    """
+    Read a ScanImage TIFF and return per-frame START and ACQUIRE times.
+
+    Returns
+    -------
+    frame_start_rel_sec : (N,) float64
+        Frame START times relative to acquisition start (frameTimestamps_sec)
+
+    frame_start_wallclock : (N,) datetime64[ns]
+        Wall-clock frame START times (epoch + frameTimestamps_sec)
+
+    frame_acquire_rel_sec : (N,) float64
+        Frame ACQUIRE times approximated as next frame's START time
+
+    frame_acquire_wallclock : (N,) datetime64[ns]
+        Wall-clock frame ACQUIRE times
+    """
+    import tifffile as tiff
+    import numpy as np
+    import datetime as dt
+
+    ts = []
+    epoch_list = None
+
+    with tiff.TiffFile(path_tif) as tf:
+        for i, page in enumerate(tf.pages):
+            desc = page.description
+
+            if isinstance(desc, dict):
+                dd = desc.get("Description", desc)
+            elif isinstance(desc, str):
+                dd = parse_scanimage_description(desc)
+            else:
+                raise TypeError(f"Page {i}: unexpected description type: {type(desc)}")
+
+            if epoch_list is None:
+                if "epoch" not in dd:
+                    raise KeyError(f"Page {i}: missing epoch")
+                epoch_list = dd["epoch"]
+
+            if "frameTimestamps_sec" not in dd:
+                raise KeyError(f"Page {i}: missing frameTimestamps_sec")
+
+            ts.append(float(dd["frameTimestamps_sec"]))
+
+    frame_start_rel_sec = np.asarray(ts, dtype=np.float64)
+
+    # ---- wall-clock START times ----
+    Y, M, D, h, m, sec = epoch_list[:6]
+    sec_i = int(sec)
+    usec = int(round((sec - sec_i) * 1_000_000))
+    epoch_dt = dt.datetime(int(Y), int(M), int(D), int(h), int(m), sec_i, usec)
+    epoch64 = np.datetime64(epoch_dt, "ns")
+
+    frame_start_wallclock = epoch64 + (frame_start_rel_sec * 1e9).astype("timedelta64[ns]")
+
+    # ---- ACQUIRE times: shift by one frame ----
+    frame_acquire_rel_sec = np.empty_like(frame_start_rel_sec)
+    frame_acquire_rel_sec[:-1] = frame_start_rel_sec[1:]
+
+    if frame_start_rel_sec.size >= 2:
+        dt_last = frame_start_rel_sec[-1] - frame_start_rel_sec[-2]
+    else:
+        dt_last = 0.0
+
+    frame_acquire_rel_sec[-1] = frame_start_rel_sec[-1] + dt_last
+
+    frame_acquire_wallclock = epoch64 + (frame_acquire_rel_sec * 1e9).astype("timedelta64[ns]")
+
+    # return (
+    #     frame_start_rel_sec,
+    #     frame_start_wallclock,
+    #     frame_acquire_rel_sec,
+    #     frame_acquire_wallclock,
+    # )
+
+    return (
+        frame_acquire_rel_sec,
+        frame_acquire_wallclock,
+    )
+
+
     
     
     

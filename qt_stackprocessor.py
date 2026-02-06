@@ -8,6 +8,7 @@ import pyqtgraph as pg
 
 import tifffile
 from utils_image import get_meanZstack
+from utils_io import get_scanimage_frame_times
 
 
 class _TiffStackAdapter:
@@ -56,7 +57,7 @@ class QtStackProcessor(QtWidgets.QWidget):
 
         self.tifffilename = None
         self.relogfilename = None
-        self.DPFolder = None
+        self.CentreDetectionFolder = None
         self.meanStacks = None
         self.display_index = 0
 
@@ -73,44 +74,55 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.import_relog_btn.clicked.connect(self.import_RElog)
         layout.addWidget(self.import_relog_btn, 1, 0)
 
-        layout.addWidget(QtWidgets.QLabel("Volumes:"), 2, 0)
-        self.volumes = QtWidgets.QLineEdit()
-        layout.addWidget(self.volumes, 3, 0)
+        fields_row = QtWidgets.QHBoxLayout()
+        fields_row.setSpacing(8)
 
-        layout.addWidget(QtWidgets.QLabel("Stacks:"), 4, 0)
-        self.stacks = QtWidgets.QLineEdit()
-        layout.addWidget(self.stacks, 5, 0)
+        fields_row.addWidget(QtWidgets.QLabel("Volumes:"))
+        self.volumes = QtWidgets.QLineEdit("1")
+        self.volumes.setFixedWidth(60)
+        fields_row.addWidget(self.volumes)
 
-        layout.addWidget(QtWidgets.QLabel("Frames:"), 6, 0)
-        self.frames = QtWidgets.QLineEdit()
-        layout.addWidget(self.frames, 7, 0)
+        fields_row.addWidget(QtWidgets.QLabel("Stacks:"))
+        self.stacks = QtWidgets.QLineEdit("41")
+        self.stacks.setFixedWidth(60)
+        fields_row.addWidget(self.stacks)
+
+        fields_row.addWidget(QtWidgets.QLabel("Frames:"))
+        self.frames = QtWidgets.QLineEdit("200")
+        self.frames.setFixedWidth(60)
+        fields_row.addWidget(self.frames)
 
         self.process_btn = QtWidgets.QPushButton("Get mean Zstacks")
         self.process_btn.clicked.connect(self.getmeanzstack)
-        layout.addWidget(self.process_btn, 0, 1, 4, 1)
+        fields_row.addWidget(self.process_btn)
+        fields_row.addStretch(1)
+        layout.addLayout(fields_row, 2, 0, 1, 3)
 
         self.prev_btn = QtWidgets.QPushButton("Prev")
         self.prev_btn.clicked.connect(self.previous_image)
-        layout.addWidget(self.prev_btn, 4, 1)
+        layout.addWidget(self.prev_btn, 3, 0)
 
         self.next_btn = QtWidgets.QPushButton("Next")
         self.next_btn.clicked.connect(self.next_image)
-        layout.addWidget(self.next_btn, 5, 1)
+        layout.addWidget(self.next_btn, 3, 1, 1, 2)
 
         self.index_label = QtWidgets.QLabel("Stack index: -")
-        layout.addWidget(self.index_label, 6, 1)
+        layout.addWidget(self.index_label, 4, 0, 1, 3)
 
         self.status_label = QtWidgets.QLabel("Status: Idle")
-        layout.addWidget(self.status_label, 7, 1)
+        layout.addWidget(self.status_label, 5, 0, 1, 3)
 
         self.image_view = pg.ImageView(view=pg.PlotItem())
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
-        layout.addWidget(self.image_view, 8, 0, 1, 2)
+        layout.addWidget(self.image_view, 6, 0, 1, 3)
 
     def log_message(self, message):
         if self.app is not None:
             self.app.log_message(message)
+        
+    def set_folder(self, folder):
+        self.folder = folder
 
     def import_tiff(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -122,7 +134,9 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.tifffilename = filename
         self.log_message(f"Imported tiff file: {self.tifffilename}")
 
-        self.DPFolder = os.path.join(os.path.dirname(self.tifffilename), "DP")
+        self.CentreDetectionFolder = os.path.join(
+            os.path.dirname(self.tifffilename), "CentreDetectionResults"
+        )
 
     def import_RElog(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -138,16 +152,22 @@ class QtStackProcessor(QtWidgets.QWidget):
         if not self.tifffilename or not self.relogfilename:
             self.log_message("Error: Please import both a tiff file and a RElog file.")
             return
-        if self.DPFolder is None:
-            self.log_message("Error: DP folder not set. Run center detection first.")
+        if self.CentreDetectionFolder is None:
+            self.log_message(
+                "Error: CentreDetectionResults folder not set. Run center detection first."
+            )
             return
 
         self.status_label.setText("Status: Loading...")
         QtWidgets.QApplication.processEvents()
 
-        circlecenterfilename = os.path.join(self.DPFolder, "circlecenter.txt")
+        circlecenterfilename = os.path.join(
+            self.CentreDetectionFolder, "circlecenter.txt"
+        )
         if not os.path.exists(circlecenterfilename):
-            self.log_message("Error: circlecenter.txt not found in DP folder.")
+            self.log_message(
+                "Error: circlecenter.txt not found in CentreDetectionResults folder."
+            )
             self.status_label.setText("Status: Idle")
             return
         with open(circlecenterfilename, "r", encoding="utf-8") as f:
@@ -192,10 +212,15 @@ class QtStackProcessor(QtWidgets.QWidget):
             S, num_v, num_s, num_f, Rotcenter=[self.rotx, self.roty], ImgReg=True
         )
 
-        self.log_message("Save the mean Zstacks as npy files and png images to the DP folder.")
-        np.save(os.path.join(self.DPFolder, "meanstacks.npy"), self.meanStacks)
+        self.log_message(
+            "Save the mean Zstacks as npy files and png images to the CentreDetectionResults folder."
+        )
+        np.save(
+            os.path.join(self.CentreDetectionFolder, "meanstacks.npy"),
+            self.meanStacks,
+        )
 
-        zstack_folder = os.path.join(self.DPFolder, "zstacks")
+        zstack_folder = os.path.join(self.CentreDetectionFolder, "zstacks")
         if os.path.exists(zstack_folder):
             shutil.rmtree(zstack_folder)
         os.mkdir(zstack_folder)
