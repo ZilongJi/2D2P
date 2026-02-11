@@ -228,6 +228,56 @@ def get_scanimage_frame_times(path_tif: str):
         frame_acquire_wallclock,
     )
 
+def read_rotary_log(path_txt):
+    """
+    Read rotary log with columns:
+    DateTime  MonotonicSec  AngleDeg
+    Returns: (dt_list, mono_list, angle_list)
+    """
+    dt_list = []
+    mono_list = []
+    angle_list = []
+
+    with open(path_txt, "r", encoding="utf-8") as f:
+        header = f.readline()
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+
+            dt_str = parts[0] + " " + parts[1]
+            mono_str = parts[2]
+            angle_str = parts[3] if len(parts) > 3 else ""
+
+            try:
+                t = dt.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                try:
+                    t = dt.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+
+            try:
+                mono = float(mono_str)
+            except ValueError:
+                continue
+
+            if angle_str == "" or angle_str.lower() == "nan":
+                angle = np.nan
+            else:
+                try:
+                    angle = float(angle_str)
+                except ValueError:
+                    angle = np.nan
+
+            dt_list.append(t)
+            mono_list.append(mono)
+            angle_list.append(angle)
+
+    return dt_list, mono_list, angle_list
 
     
     
