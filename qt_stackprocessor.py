@@ -8,7 +8,7 @@ import pyqtgraph as pg
 
 import tifffile
 from utils_image import get_meanZstack
-from utils_io import get_scanimage_frame_times
+from utils_io import get_frame_angles_from_rotary
 
 
 class _TiffStackAdapter:
@@ -25,28 +25,6 @@ class _TiffStackAdapter:
 
     def get_n_frames(self):
         return int(self._frames.shape[0])
-
-
-def _read_relog_angles(relog_path, n_frames):
-    data = np.genfromtxt(relog_path, dtype=float, comments="#", invalid_raise=False)
-    if data.size == 0:
-        raise ValueError("RElog file appears empty or unreadable.")
-    if data.ndim == 1:
-        angles = data
-    else:
-        angles = data[:, -1]
-
-    angles = np.asarray(angles, dtype=float)
-    angles = angles[~np.isnan(angles)]
-    if angles.size == 0:
-        raise ValueError("No numeric angle data found in RElog file.")
-
-    if angles.size != n_frames:
-        x_src = np.linspace(0.0, 1.0, angles.size)
-        x_tgt = np.linspace(0.0, 1.0, n_frames)
-        angles = np.interp(x_tgt, x_src, angles)
-
-    return angles
 
 
 class QtStackProcessor(QtWidgets.QWidget):
@@ -70,7 +48,7 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.import_tiff_btn.clicked.connect(self.import_tiff)
         layout.addWidget(self.import_tiff_btn, 0, 0)
 
-        self.import_relog_btn = QtWidgets.QPushButton("Import RElog file")
+        self.import_relog_btn = QtWidgets.QPushButton("Import rotary log file")
         self.import_relog_btn.clicked.connect(self.import_RElog)
         layout.addWidget(self.import_relog_btn, 1, 0)
 
@@ -198,13 +176,20 @@ class QtStackProcessor(QtWidgets.QWidget):
                 f"Warning: volumes*stacks*frames = {expected}, but tiff has {n_frames} frames."
             )
 
-        self.log_message("Reading RElog angles...")
+        self.log_message("Reading rotary log angles...")
         try:
-            angles = _read_relog_angles(self.relogfilename, n_frames)
+            angles, _, _ = get_frame_angles_from_rotary(
+                self.tifffilename, self.relogfilename
+            )
         except ValueError as exc:
             self.log_message(f"Error: {exc}")
             self.status_label.setText("Status: Idle")
             return
+
+        if angles.size != n_frames:
+            self.log_message(
+                f"Warning: {angles.size} angles for {n_frames} frames; using nearest matches."
+            )
 
         S = _TiffStackAdapter(frames, angles)
         self.log_message("Get mean Zstacks by unrotating and cropping each frame, then averaging each stack.")

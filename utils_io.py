@@ -1,5 +1,10 @@
 import os
 import glob
+import tifffile as tiff
+import numpy as np
+import re
+import datetime as dt
+
 
 def get_imaging_files(datafolder, namelist, readVRlogs=True):
     '''
@@ -72,10 +77,7 @@ def get_rotary_center(centerfile):
     
     return rotCenter
 
-import tifffile as tiff
-import numpy as np
-import re
-import datetime as dt
+
 
 _num_re = re.compile(r"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$")
 
@@ -164,9 +166,6 @@ def get_scanimage_frame_times(path_tif: str):
     frame_acquire_wallclock : (N,) datetime64[ns]
         Wall-clock frame ACQUIRE times
     """
-    import tifffile as tiff
-    import numpy as np
-    import datetime as dt
 
     ts = []
     epoch_list = None
@@ -228,7 +227,7 @@ def get_scanimage_frame_times(path_tif: str):
         frame_acquire_wallclock,
     )
 
-def read_rotary_log(path_txt):
+def read_rotary_log(path_txt, tA_wall=None, window_sec=1.0):
     """
     Read rotary log with columns:
     DateTime  MonotonicSec  AngleDeg
@@ -237,6 +236,31 @@ def read_rotary_log(path_txt):
     dt_list = []
     mono_list = []
     angle_list = []
+
+    # optional time window filter
+    t_min = None
+    t_max = None
+    if tA_wall is not None:
+        tA_wall_arr = np.asarray(tA_wall)
+        if tA_wall_arr.size > 0:
+            if np.issubdtype(tA_wall_arr.dtype, np.datetime64):
+                # convert numpy datetime64 -> python datetime
+                def _dt64_to_dt(x):
+                    ns = x.astype("datetime64[ns]").astype("int64")
+                    return dt.datetime(1970, 1, 1) + dt.timedelta(microseconds=ns / 1000.0)
+
+                t_min = _dt64_to_dt(tA_wall_arr.min())
+                t_max = _dt64_to_dt(tA_wall_arr.max())
+            else:
+                # assume list of datetime objects
+                t_min = min(tA_wall)
+                t_max = max(tA_wall)
+
+            if window_sec is None:
+                window_sec = 0.0
+
+            t_min = t_min - dt.timedelta(seconds=float(window_sec))
+            t_max = t_max + dt.timedelta(seconds=float(window_sec))
 
     with open(path_txt, "r", encoding="utf-8") as f:
         header = f.readline()
@@ -260,6 +284,9 @@ def read_rotary_log(path_txt):
                 except ValueError:
                     continue
 
+            if t_min is not None and (t < t_min or t > t_max):
+                continue
+
             try:
                 mono = float(mono_str)
             except ValueError:
@@ -278,6 +305,41 @@ def read_rotary_log(path_txt):
             angle_list.append(angle)
 
     return dt_list, mono_list, angle_list
+
+
+def get_frame_angles_from_rotary(tif_path, rotary_log_path, window_sec=1.0):
+    """
+    For each frame in tif_path, return nearest rotary angle from rotary_log_path.
+
+    Returns
+    -------
+    angle_at_tA : (N,) float64
+        Angle per frame, nearest neighbor matched by wall-clock time.
+    tA_rel : (N,) float64
+        Frame acquire times relative to acquisition start (seconds).
+    tA_wall : (N,) datetime64[ns]
+        Frame acquire wall-clock timestamps.
+    """
+    tA_rel, tA_wall = get_scanimage_frame_times(tif_path)
+    dt_list, _, angle_list = read_rotary_log(rotary_log_path, tA_wall=tA_wall, window_sec=window_sec)
+
+    angle_arr = np.asarray(angle_list, dtype=float)
+    dt_arr = np.array(dt_list, dtype="datetime64[ns]")
+
+    if len(tA_wall) == 0:
+        angle_at_tA = np.array([], dtype=float)
+    else:
+        idx = np.searchsorted(dt_arr, tA_wall, side="left")
+        idx = np.clip(idx, 0, len(dt_arr) - 1)
+
+        prev_idx = np.clip(idx - 1, 0, len(dt_arr) - 1)
+        use_prev = (idx > 0) & (
+            np.abs(tA_wall - dt_arr[prev_idx]) <= np.abs(tA_wall - dt_arr[idx])
+        )
+        idx[use_prev] = prev_idx[use_prev]
+        angle_at_tA = angle_arr[idx]
+
+    return angle_at_tA, tA_rel, tA_wall
 
     
     
