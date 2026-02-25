@@ -1,7 +1,8 @@
 import sys
-from PyQt5 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from qt_centerdetector import QtCenterDetector
+from qt_zdriftprocessor import QtZDriftProcessor
 from qt_stackprocessor import QtStackProcessor
 
 
@@ -10,7 +11,7 @@ class PlaceholderPanel(QtWidgets.QWidget):
         super().__init__(parent)
         layout = QtWidgets.QVBoxLayout(self)
         label = QtWidgets.QLabel(f"{title} is not migrated yet.")
-        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(label)
 
 
@@ -73,16 +74,17 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
 
         self.stack_panel = QtStackProcessor(folder=self.folder, app=self)
         self.tabs.addTab(self.stack_panel, "Stack Processor")
-        self.tabs.addTab(PlaceholderPanel("Z-Drift Monitor"), "Z-Drift Monitor")
+        self.zdrift_panel = QtZDriftProcessor(folder=self.folder, app=self)
+        self.tabs.addTab(self.zdrift_panel, "Z-Drift Monitor")
 
         self._build_log_dock()
 
     def _build_log_dock(self):
         dock = QtWidgets.QDockWidget("Log Output", self)
         dock.setAllowedAreas(
-            QtCore.Qt.LeftDockWidgetArea
-            | QtCore.Qt.RightDockWidgetArea
-            | QtCore.Qt.BottomDockWidgetArea
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+            | QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
         )
         self.log_text = QtWidgets.QPlainTextEdit()
         self.log_text.setReadOnly(True)
@@ -98,7 +100,7 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
             "}"
         )
         dock.setWidget(self.log_text)
-        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
     def log_message(self, message):
         self.log_text.appendPlainText(message)
@@ -116,6 +118,8 @@ class TwoDTwoPQt(QtWidgets.QMainWindow):
             self.center_panel.set_folder(path)
         if hasattr(self.stack_panel, "set_folder"):
             self.stack_panel.set_folder(path)
+        if hasattr(self.zdrift_panel, "set_folder"):
+            self.zdrift_panel.set_folder(path)
 
 
 def main():

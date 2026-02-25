@@ -3,12 +3,13 @@ import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 
-from PyQt5 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 import pyqtgraph as pg
 
 import tifffile
-from utils_image import get_meanZstack
+from utils_image import get_meanframe_from_Zstacks_cv2
 from utils_io import get_frame_angles_from_rotary
+import torch
 
 
 class _TiffStackAdapter:
@@ -27,6 +28,51 @@ class _TiffStackAdapter:
         return int(self._frames.shape[0])
 
 
+class _MeanZStackWorker(QtCore.QObject):
+    log = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal(object)
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(
+        self,
+        frames,
+        angles,
+        volume,
+        stacks,
+        frames_per_stack,
+        Rotcenter,
+        device,
+        ImgReg,
+    ):
+        super().__init__()
+        self._frames = frames
+        self._angles = angles
+        self._volume = volume
+        self._stacks = stacks
+        self._frames_per_stack = frames_per_stack
+        self._Rotcenter = Rotcenter
+        self._device = device
+        self._ImgReg = ImgReg
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        try:
+            meanStacks = get_meanframe_from_Zstacks_cv2(
+                self._frames,
+                self._angles,
+                volume=self._volume,
+                stacks=self._stacks,
+                frames_per_stack=self._frames_per_stack,
+                Rotcenter=self._Rotcenter,
+                ImgReg=self._ImgReg,
+                device=self._device,
+                log_fn=self.log.emit,
+            )
+            self.finished.emit(meanStacks)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class QtStackProcessor(QtWidgets.QWidget):
     def __init__(self, folder=None, app=None, parent=None):
         super().__init__(parent)
@@ -38,6 +84,8 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.CentreDetectionFolder = None
         self.meanStacks = None
         self.display_index = 0
+        self._worker_thread = None
+        self._worker = None
 
         self._build_ui()
 
@@ -164,6 +212,23 @@ class QtStackProcessor(QtWidgets.QWidget):
 
         self.log_message("Reading tiff file with tifffile...")
         frames = tifffile.imread(self.tifffilename)
+
+        orig_shape = frames.shape
+        self.log_message(f"Raw TIFF shape: {orig_shape}, dtype={frames.dtype}")
+
+        if frames.ndim == 3:
+            # already [n_frames, h, w]
+            n_frames, h, w = frames.shape
+        elif frames.ndim == 4:
+            # common case after update: [stacks, frames_per_stack, h, w]
+            s, f, h, w = frames.shape
+            frames = frames.reshape(s * f, h, w)
+            n_frames = frames.shape[0]
+        else:
+            self.log_message(f"Error: Unexpected TIFF dimensions: {frames.ndim}D {orig_shape}")
+            self.status_label.setText("Status: Idle")
+            return
+
         if frames.ndim != 3:
             self.log_message("Error: Expected a 3D tiff stack [n_frames, height, width].")
             self.status_label.setText("Status: Idle")
@@ -191,11 +256,37 @@ class QtStackProcessor(QtWidgets.QWidget):
                 f"Warning: {angles.size} angles for {n_frames} frames; using nearest matches."
             )
 
-        S = _TiffStackAdapter(frames, angles)
-        self.log_message("Get mean Zstacks by unrotating and cropping each frame, then averaging each stack.")
-        self.meanStacks = get_meanZstack(
-            S, num_v, num_s, num_f, Rotcenter=[self.rotx, self.roty], ImgReg=True
+        self.log_message(
+            "Get mean Zstacks by unrotating and cropping each frame, then averaging each stack."
         )
+
+        self.status_label.setText("Status: Processing...")
+        self.process_btn.setEnabled(False)
+
+        device = torch.device("cuda")
+        self._worker_thread = QtCore.QThread(self)
+        self._worker = _MeanZStackWorker(
+            frames=frames,
+            angles=angles,
+            volume=num_v,
+            stacks=num_s,
+            frames_per_stack=num_f,
+            Rotcenter=[self.rotx, self.roty],
+            device=device,
+            ImgReg=True,
+        )
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.log.connect(self.log_message)
+        self._worker.finished.connect(self._on_meanstacks_ready)
+        self._worker.error.connect(self._on_worker_error)
+        self._worker.finished.connect(self._worker_thread.quit)
+        self._worker.error.connect(self._worker_thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.error.connect(self._worker.deleteLater)
+        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+        self._worker_thread.start()
+        return
 
         self.log_message(
             "Save the mean Zstacks as npy files and png images to the CentreDetectionResults folder."
@@ -225,6 +316,47 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.display_processed_images()
         self.log_message("Unrotation and crop finished.")
         self.status_label.setText("Status: Done")
+        self.process_btn.setEnabled(True)
+
+    def _on_meanstacks_ready(self, meanStacks):
+        self.meanStacks = meanStacks
+        self._finalize_meanstacks()
+
+    def _on_worker_error(self, message):
+        self.log_message(f"Error: {message}")
+        self.status_label.setText("Status: Idle")
+        self.process_btn.setEnabled(True)
+
+    def _finalize_meanstacks(self):
+        self.log_message(
+            "Save the mean Zstacks as npy files and png images to the CentreDetectionResults folder."
+        )
+        np.save(
+            os.path.join(self.CentreDetectionFolder, "meanstacks.npy"),
+            self.meanStacks,
+        )
+
+        zstack_folder = os.path.join(self.CentreDetectionFolder, "zstacks")
+        if os.path.exists(zstack_folder):
+            shutil.rmtree(zstack_folder)
+        os.mkdir(zstack_folder)
+
+        for i in range(self.meanStacks.shape[0]):
+            fig = plt.figure()
+            plt.imshow(self.meanStacks[i, :, :], cmap="gray")
+            plt.axis("off")
+            plt.savefig(
+                os.path.join(zstack_folder, f"stack{i + 1}.png"),
+                bbox_inches="tight",
+                pad_inches=0,
+            )
+            plt.close(fig)
+
+        self.display_index = 0
+        self.display_processed_images()
+        self.log_message("Unrotation and crop finished.")
+        self.status_label.setText("Status: Done")
+        self.process_btn.setEnabled(True)
 
     def display_processed_images(self):
         if self.meanStacks is None or self.meanStacks.size == 0:

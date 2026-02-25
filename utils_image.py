@@ -5,14 +5,125 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 import time
+import cv2
 import tifffile
 from datetime import datetime, timedelta
 
 import suite2p
+from suite2p import default_ops
 from suite2p.registration import register, rigid
 
 # from scanimagetiffio import SITiffIO
 from utils_io import get_imaging_files, get_rotary_center
+
+
+def RegFrame(frames, device):
+    '''
+    Perform image registration on the frames
+    Input:
+        frames: a list of frames
+    Output:
+        mean_img: the mean image of the registered frames
+    '''
+    ops = default_ops.default_ops()
+    ops["batch_size"] = frames.shape[0]  
+
+    refImg =  register.compute_reference(frames, settings=ops, device=device)
+
+    N = frames.shape[0]
+    #perform image registration with built-in suite2p function
+    regframes = np.zeros_like(frames)
+    output = register.register_frames(f_align_in=frames, refImg=refImg, f_align_out=regframes, batch_size=N, block_size=[32,32], nonrigid=True, device=device)
+
+    rmin, rmax, mean_img, offsets_all, blocks = output
+    
+    return mean_img
+
+def _cv2_crop_bounds(h0, w0, rotCenter):
+    # OpenCV expects center = (x, y) = (col, row)
+    cx = float(rotCenter[1])
+    cy = float(rotCenter[0])
+    minval = min(cx, w0 - cx, cy, h0 - cy)
+    maxHalfSize = int(np.floor(np.sqrt(2) * minval / 2.0))
+    left = int(round(cx - maxHalfSize))
+    right = int(round(cx + maxHalfSize))
+    upper = int(round(cy - maxHalfSize))
+    lower = int(round(cy + maxHalfSize))
+    return cx, cy, left, right, upper, lower
+
+
+def get_meanframe_from_Zstacks_cv2(
+    frames,
+    angles,
+    volume,
+    stacks,
+    frames_per_stack,
+    Rotcenter,
+    device,
+    ImgReg=True,
+    log_fn=None,
+):
+    """
+    OpenCV-accelerated version.
+    Requires: cv2
+    """
+    def _log(msg):
+        if log_fn is not None:
+            log_fn(msg)
+        else:
+            print(msg)
+
+    _log("Extract the mean frame of Zstacks (OpenCV)...")
+    t0 = time.time()
+
+    frames = np.asarray(frames)
+    angles = np.asarray(angles, dtype=float)
+
+    n_frames = frames.shape[0]
+    expected = volume * stacks * frames_per_stack
+    if n_frames != expected:
+        raise ValueError(f"Actual frames: got {n_frames}, expected {expected}")
+
+    h0, w0 = frames[0].shape[:2]
+    cx, cy, left, right, upper, lower = _cv2_crop_bounds(h0, w0, Rotcenter)
+    Rotcenter_cv = (cx, cy)
+
+    out_h = lower - upper
+    out_w = right - left
+    meanZstacks = np.zeros((stacks, out_h, out_w), dtype=np.int16)
+
+    for stack_i in range(stacks):
+        t_stack0 = time.time()   # <<< 单个 stack 开始计时
+        _log(f"Processing stack {stack_i}")
+
+        inds = np.zeros((volume * frames_per_stack), dtype=np.int32)
+        for vi in range(volume):
+            start = vi * stacks * frames_per_stack + stack_i * frames_per_stack
+            inds[vi * frames_per_stack:(vi + 1) * frames_per_stack] = np.arange(
+                start, start + frames_per_stack, 1
+            )
+
+        temp = np.zeros((len(inds), out_h, out_w), dtype=np.float32)
+        for i, ind in enumerate(inds):
+            frame = frames[ind]
+            angle = angles[ind]
+
+            M = cv2.getRotationMatrix2D(Rotcenter_cv, angle, 1.0)
+            rotated = cv2.warpAffine(frame, M, (w0, h0), flags=cv2.INTER_LINEAR)
+            temp[i] = rotated[upper:lower, left:right]
+
+        if ImgReg:
+            meanImg = RegFrame(temp, device)
+        else:
+            meanImg = temp.mean(axis=0)
+
+        meanZstacks[stack_i] = meanImg.astype(np.int16)
+
+        stack_time = time.time() - t_stack0
+        _log(f"Stack {stack_i+1} done. Time used: {stack_time:.2f} sec")
+
+    _log("Getting the mean Z stack frames -- Done! Time used: {}".format(time.time() - t0))
+    return meanZstacks
 
 def getMeantiff(data, frac=1.0):
     """
@@ -33,73 +144,6 @@ def getMeantiff(data, frac=1.0):
     indexs = np.random.choice(nframes, num, replace=False)
     meanframe = data[indexs].mean(axis=0)
     return meanframe.astype(np.int16)
-
-def get_meanframe_from_Zstacks(data, volume, stacks, frames, Rotcenter, ImgReg=False):
-    """
-    get the mean frame of Zstacks
-    Args:
-        Sdata: array of shape [n_frames, height, width]
-        volume [int]: volume of the Zstack
-        stacks [int]: number of stacks
-        frames [int]: number of frames
-        Rotcenter [x,y list]: rotation center
-        ImgReg [bool]: if True, do image registration
-    Return:
-        meanZstack [stacks*Ly*Lx]: the mean frame of Zstack
-    """
-    print("Extract the mean frame of Zstacks...")
-    
-    #count the time for the function
-    t0 = time.time()
-
-    # Angles = xxx?
-    
-    #figure out the size of the cropped image
-    frame1 = S.get_frame(1)
-    angle1 = Angles[0]
-    UnrotFrame1 = Image.fromarray(frame1).rotate(angle1, center=Rotcenter)
-    croppedFrame1 = cropLargestRecT(UnrotFrame1, Rotcenter)
-    w, h = croppedFrame1.size
-    
-    #generate an empty array to store the mean frame of Zstack
-    meanZstacks = np.zeros((stacks, h, w))
-    
-    #loop through all the stacks
-    for stack_i in range(stacks):
-        print("Processing stack {}".format(stack_i))
-        #create a temporary array to store all the frames in the current stack
-        temp_stack_frames = np.zeros((volume*frames, w, h), dtype=np.int16)
-        
-        #get all the index of the frames belonging to the current stack
-        #init an empty array to store the index
-        inds = np.zeros((volume*frames), dtype=np.int32)
-        for vi in range(volume):
-            ind_in_vloume = vi*stacks*frames+np.arange(stack_i*frames,(stack_i+1)*frames,1)
-            inds[vi*frames:(vi+1)*frames] = ind_in_vloume
-    
-        #loop through the index and get the frames
-        for i,ind in enumerate(inds):
-            #get the frame, unrotate and crop
-            frame_i = S.get_frame(ind+1)
-            angle_i = Angles[ind]
-            UnrotFrame_i = Image.fromarray(frame_i).rotate(angle_i, center=Rotcenter)
-            croppedFrame_i = cropLargestRecT(UnrotFrame_i, Rotcenter)
-            croppedFrame_i = np.array(croppedFrame_i, dtype=np.int16)
-
-            #add the current frame to temp_stack
-            temp_stack_frames[i] = croppedFrame_i
-            
-        #do image registration if ImgReg is True
-        if ImgReg:
-            meanImg, _ = RegFrame(temp_stack_frames)
-        else:
-            meanImg = np.mean(temp_stack_frames, axis=0)
-        
-        meanZstacks[stack_i] = np.int16(meanImg)
-        
-    print("Getting the mean Z stack frames -- Done! Time used: {}".format(time.time()-t0))
-    
-    return meanZstacks
 
 def getMeanTiff_randomsampling(S, frac):
     """
@@ -226,6 +270,43 @@ def UnrotateCropFrame(Array, Angle, rotCenter):
     
     return NewFrames
 
+def get_unrotate_crop_cv2(Array, Angle, rotCenter):
+    """
+    OpenCV-based unrotate + crop for a stack of frames.
+
+    Args:
+        Array (array): 3D array [n_frames, h, w]
+        Angle (list/array): rotation angles per frame
+        rotCenter (list): rotation center [row, col] from center detection
+    Returns:
+        np.ndarray: unrotated and cropped frames [n_frames, out_h, out_w]
+    """
+    frames = np.asarray(Array)
+    angles = np.asarray(Angle, dtype=float)
+
+    if frames.ndim != 3:
+        raise ValueError("Array must be a 3D array [n_frames, h, w]")
+    if len(angles) != frames.shape[0]:
+        raise ValueError("Angle length must match number of frames")
+
+    h0, w0 = frames[0].shape[:2]
+    cx, cy, left, right, upper, lower = _cv2_crop_bounds(h0, w0, rotCenter)
+    rotCenter_cv = (cx, cy)
+
+    out_h = lower - upper
+    out_w = right - left
+    out = np.zeros((frames.shape[0], out_h, out_w), dtype=np.int16)
+
+    for i in range(frames.shape[0]):
+        frame = frames[i]
+        angle = angles[i]
+        M = cv2.getRotationMatrix2D(rotCenter_cv, angle, 1.0)
+        rotated = cv2.warpAffine(frame, M, (w0, h0), flags=cv2.INTER_LINEAR)
+        cropped = rotated[upper:lower, left:right]
+        out[i] = cropped.astype(np.int16, copy=False)
+
+    return out
+
 def cropLargestRecT(img, cropcenter):
     """
     crop the largest inner rectangle from PIL image under rotation
@@ -245,29 +326,32 @@ def cropLargestRecT(img, cropcenter):
     cropImg = img.crop((left, upper, right, lower))
     return cropImg
 
-def RegFrame(frames):
-    '''
-    Perform image registration on the frames
-    Input:
-        frames: a list of frames
-    Output:
-        mean_img: the mean image of the registered frames
-    '''
+# def RegFrame(frames):
+#     '''
+#     Perform image registration on the frames
+#     Input:
+#         frames: a list of frames
+#     Output:
+#         mean_img: the mean image of the registered frames
+#     '''
     
-    # prepare configurations using the ops dictionary (need to be add to the GUI later)
-    ops = suite2p.default_ops()
-    ops['batch_size'] = 200 # we will decrease the batch_size in case low RAM on computer
-    ops['block_size'] = [64,64]
-    ops['fs'] = 30 # sampling rate of recording, determines binning for cell detection
-    ops['tau'] = 0.7 # timescale of gcamp to use for deconvolution
+#     # prepare configurations using the ops dictionary (need to be add to the GUI later)
+#     ops = suite2p.default_ops()
+#     ops['batch_size'] = 200 # we will decrease the batch_size in case low RAM on computer
+#     ops['block_size'] = [64,64]
+#     ops['fs'] = 30 # sampling rate of recording, determines binning for cell detection
+#     ops['tau'] = 0.7 # timescale of gcamp to use for deconvolution
 
-    #perform image registration with built-in suite2p function
-    regframes = np.zeros_like(frames)
-    output = register.compute_reference_and_register_frames(frames, f_align_out=regframes, refImg=None, ops=ops)
+#     #perform image registration with built-in suite2p function
+#     regframes = np.zeros_like(frames)
+#     output = register.compute_reference_and_register_frames(frames, f_align_out=regframes, refImg=None, ops=ops)
     
-    refImg, rmin, rmax, mean_img, rigid_offsets, nonrigid_offsets, zest = output
+#     refImg, rmin, rmax, mean_img, rigid_offsets, nonrigid_offsets, zest = output
     
-    return mean_img, regframes
+#     return mean_img, regframes
+
+
+
 
 def compute_zpos_sp(Zstack, regFrames, ops):
     """
