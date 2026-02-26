@@ -7,12 +7,11 @@ from matplotlib.gridspec import GridSpec
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import torch
-import tifffile
 from suite2p import default_ops
 from suite2p.registration import register
 
 from utils_image import get_unrotate_crop_cv2, RegFrame, compute_zpos_sp, findFOV
-from utils_io import get_frame_angles_from_rotary
+from utils_io import load_buffer_frames_and_angles
 
 
 class QtZDriftProcessor(QtWidgets.QWidget):
@@ -23,7 +22,8 @@ class QtZDriftProcessor(QtWidgets.QWidget):
 
         self.tifffilename = None
         self.relogfilename = None
-        self.DPFolder = None
+        self.timefilename = None
+        self.DataProcessFolder = None
 
         self.meanRegImg = None
         self.regFrames = None
@@ -34,12 +34,12 @@ class QtZDriftProcessor(QtWidgets.QWidget):
     def _build_ui(self):
         layout = QtWidgets.QGridLayout(self)
 
-        self.import_tiff_btn = QtWidgets.QPushButton("Import tiff")
-        self.import_tiff_btn.clicked.connect(self.import_tiff)
+        self.import_tiff_btn = QtWidgets.QPushButton("Import buffered tiff")
+        self.import_tiff_btn.clicked.connect(self.import_tiff_buffer)
         layout.addWidget(self.import_tiff_btn, 0, 0)
 
-        self.import_relog_btn = QtWidgets.QPushButton("Import RElog")
-        self.import_relog_btn.clicked.connect(self.import_RElog)
+        self.import_relog_btn = QtWidgets.QPushButton("Import buffered log")
+        self.import_relog_btn.clicked.connect(self.import_RElog_buffer)
         layout.addWidget(self.import_relog_btn, 1, 0)
 
         self.corr_btn = QtWidgets.QPushButton("Correlation Analysis")
@@ -65,7 +65,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
     def set_folder(self, folder):
         self.folder = folder
 
-    def import_tiff(self):
+    def import_tiff_buffer(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select a tiff file", self.folder or "", "tiff files (*.tif);;all files (*.*)"
         )
@@ -74,32 +74,38 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.tifffilename = filename
         self.log_message(f"Imported tiff file: {self.tifffilename}")
 
-        self.DPFolder = os.path.join(os.path.dirname(self.tifffilename), "DP")
-        os.makedirs(self.DPFolder, exist_ok=True)
+        self.DataProcessFolder = os.path.join(
+            os.path.dirname(self.tifffilename), "DataProcessFolder"
+        )
 
-    def import_RElog(self):
+    def import_RElog_buffer(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select a RElog file", self.folder or "", "txt files (*.txt);;all files (*.*)"
+            self, "Select a time.txt file", self.folder or "", "txt files (*.txt);;all files (*.*)"
         )
         if not filename:
             return
-        self.relogfilename = filename
-        self.log_message(f"Imported RElog file: {self.relogfilename}")
+        self.timefilename = filename
+        self.log_message(f"Imported time.txt file: {self.timefilename}")
 
     def correlationanalysis(self):
-        if not self.tifffilename or not self.relogfilename:
-            self.log_message("Error: Please import both tiff and RElog files.")
+        if not self.tifffilename or not self.timefilename or not self.relogfilename:
+            self.log_message("Error: Please import tiff, time.txt, and RElog files.")
             return
-        if not self.DPFolder:
-            self.log_message("Error: DP folder not set.")
+        if not self.DataProcessFolder:
+            self.log_message("Error: DataProcessFolder not set.")
+            return
+        if not os.path.exists(self.DataProcessFolder):
+            self.log_message(
+                "Error: DataProcessFolder not found. Run center detection first."
+            )
             return
 
         if self.app is not None:
             self.app.log_message("Unrotate tiff file and perform image registration...")
 
-        circlecenterfilename = os.path.join(self.DPFolder, "circlecenter.txt")
+        circlecenterfilename = os.path.join(self.DataProcessFolder, "circlecenter.txt")
         if not os.path.exists(circlecenterfilename):
-            self.log_message("Error: circlecenter.txt not found in DP folder.")
+            self.log_message("Error: circlecenter.txt not found in DataProcessFolder.")
             return
 
         with open(circlecenterfilename, "r", encoding="utf-8") as f:
@@ -107,8 +113,10 @@ class QtZDriftProcessor(QtWidgets.QWidget):
             self.rotx = float(last_line.split()[0])
             self.roty = float(last_line.split()[1])
 
-        self.log_message("Reading tiff file with tifffile...")
-        frames = tifffile.imread(self.tifffilename)
+        self.log_message("Reading tiff file and rotary angles...")
+        frames, angles = load_buffer_frames_and_angles(
+            self.tifffilename, self.timefilename, self.relogfilename
+        )
         orig_shape = frames.shape
         self.log_message(f"Raw TIFF shape: {orig_shape}, dtype={frames.dtype}")
 
@@ -119,18 +127,12 @@ class QtZDriftProcessor(QtWidgets.QWidget):
             return
 
         n_frames = frames.shape[0]
-        angles, _, _ = get_frame_angles_from_rotary(
-            self.tifffilename, self.relogfilename
-        )
 
         if angles.size != n_frames:
-            min_len = min(angles.size, n_frames)
             self.log_message(
-                f"Warning: {angles.size} angles for {n_frames} frames; trimming to {min_len}."
+                f"Error: {angles.size} angles for {n_frames} frames; aborting."
             )
-            frames = frames[:min_len]
-            angles = angles[:min_len]
-            n_frames = min_len
+            return
 
         self.unrotFrames = get_unrotate_crop_cv2(
             frames, angles, rotCenter=[self.rotx, self.roty]
@@ -144,9 +146,9 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         if self.app is not None:
             self.app.log_message("Perform Correlation Analysis...")
 
-        meanstacks_path = os.path.join(self.DPFolder, "meanstacks.npy")
+        meanstacks_path = os.path.join(self.DataProcessFolder, "meanstacks.npy")
         if not os.path.exists(meanstacks_path):
-            self.log_message("Error: meanstacks.npy not found in DP folder.")
+            self.log_message("Error: meanstacks.npy not found in DataProcessFolder.")
             return
 
         meanstacks = np.load(meanstacks_path)
@@ -174,7 +176,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         plt.xlabel("rotation degree")
         plt.ylabel("stack index")
         plt.plot(maxindex[1][0], maxindex[0][0], "ro")
-        fig.savefig(os.path.join(self.DPFolder, "maxcorrmeanframe.png"))
+        fig.savefig(os.path.join(self.DataProcessFolder, "maxcorrmeanframe.png"))
         plt.close(fig)
 
         self.display_corrMatrix()
@@ -183,10 +185,10 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         fig = plt.figure(figsize=(512 / 100, 512 / 100), dpi=100)
         plt.imshow(self.meanRegImg, cmap="gray")
         plt.axis("off")
-        fig.savefig(os.path.join(self.DPFolder, "meanReg.png"))
+        fig.savefig(os.path.join(self.DataProcessFolder, "meanReg.png"))
         plt.close(fig)
 
-        pixmap = QtGui.QPixmap(os.path.join(self.DPFolder, "meanReg.png"))
+        pixmap = QtGui.QPixmap(os.path.join(self.DataProcessFolder, "meanReg.png"))
         self.reg_image.setPixmap(pixmap.scaled(
             self.reg_image.size(),
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,
@@ -231,10 +233,10 @@ class QtZDriftProcessor(QtWidgets.QWidget):
 
         plt.tight_layout()
         plt.subplots_adjust(wspace=0.2)
-        fig.savefig(os.path.join(self.DPFolder, "corrMatrix.png"))
+        fig.savefig(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
         plt.close(fig)
 
-        pixmap = QtGui.QPixmap(os.path.join(self.DPFolder, "corrMatrix.png"))
+        pixmap = QtGui.QPixmap(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
         self.corr_image.setPixmap(pixmap.scaled(
             self.corr_image.size(),
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,

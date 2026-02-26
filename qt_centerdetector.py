@@ -81,7 +81,7 @@ class QtCenterDetector(QtWidgets.QWidget):
         self.tifffilename = filename
         self.log_message(f"Imported tiff file: {self.tifffilename}")
 
-        self.savefolder = os.path.join(os.path.dirname(self.tifffilename), "CentreDetectionResults")
+        self.savefolder = os.path.join(os.path.dirname(self.tifffilename), "DataProcessFolder")
         if os.path.exists(self.savefolder):
             shutil.rmtree(self.savefolder)
         os.mkdir(self.savefolder)

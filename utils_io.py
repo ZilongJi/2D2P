@@ -4,6 +4,7 @@ import tifffile as tiff
 import numpy as np
 import re
 import datetime as dt
+from pathlib import Path
 
 
 def get_imaging_files(datafolder, namelist, readVRlogs=True):
@@ -340,6 +341,132 @@ def get_frame_angles_from_rotary(tif_path, rotary_log_path, window_sec=1.0):
         angle_at_tA = angle_arr[idx]
 
     return angle_at_tA, tA_rel, tA_wall
+
+
+
+def load_tiff_and_time(tif_path, txt_path):
+    """
+    Read tiff and its paired time.txt
+
+    Returns
+    -------
+    img : ndarray
+        Tiff image data
+    frame_indices : list[int]
+        FrameIndex values
+    monotonic_secs : list[float]
+        MonotonicSec values
+    """
+    tif_path = Path(tif_path)
+    txt_path = Path(txt_path)
+
+    frame_indices = []
+    monotonic_secs = []
+
+    with txt_path.open("r", encoding="utf-8") as f:
+        _ = f.readline()  # skip header
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            try:
+                mono = float(parts[1])
+                frame = int(parts[2])
+            except ValueError:
+                continue
+            monotonic_secs.append(mono)
+            frame_indices.append(frame)
+
+    img = tiff.imread(str(tif_path))
+    return img, frame_indices, monotonic_secs
+
+
+def get_angles_from_monotonic(monotonic_secs, rotary_log_path, window_sec=1.0):
+    """
+    For each monotonic timestamp, return nearest rotary angle from rotary_log_path.
+
+    Returns
+    -------
+    angle_at_mono : (N,) float64
+        Angle per monotonic timestamp (nearest neighbor)
+    mono_arr : (N,) float64
+        Monotonic timestamps as float array
+    """
+    mono_arr = np.asarray(monotonic_secs, dtype=float)
+    if mono_arr.size == 0:
+        return np.array([], dtype=float), mono_arr
+
+    mono_min = float(mono_arr.min()) - float(window_sec)
+    mono_max = float(mono_arr.max()) + float(window_sec)
+
+    mono_list = []
+    angle_list = []
+
+    with open(rotary_log_path, "r", encoding="utf-8") as f:
+        _ = f.readline()  # skip header
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+
+            mono_str = parts[2]
+            angle_str = parts[3]
+
+            try:
+                mono = float(mono_str)
+            except ValueError:
+                continue
+
+            if mono < mono_min or mono > mono_max:
+                continue
+
+            if angle_str == "" or angle_str.lower() == "nan":
+                angle = np.nan
+            else:
+                try:
+                    angle = float(angle_str)
+                except ValueError:
+                    angle = np.nan
+
+            mono_list.append(mono)
+            angle_list.append(angle)
+
+    mono_log = np.asarray(mono_list, dtype=float)
+    angle_arr = np.asarray(angle_list, dtype=float)
+
+    if mono_log.size == 0:
+        return np.full_like(mono_arr, np.nan, dtype=float), mono_arr
+
+    # Nearest-neighbor matching
+    idx = np.searchsorted(mono_log, mono_arr, side="left")
+    idx = np.clip(idx, 0, len(mono_log) - 1)
+
+    prev_idx = np.clip(idx - 1, 0, len(mono_log) - 1)
+    use_prev = (idx > 0) & (np.abs(mono_arr - mono_log[prev_idx]) <= np.abs(mono_arr - mono_log[idx]))
+    idx[use_prev] = prev_idx[use_prev]
+
+    angle_at_mono = angle_arr[idx]
+    return angle_at_mono, mono_arr
+
+
+def load_buffer_frames_and_angles(tif_path, txt_path, rotary_log_path, window_sec=1.0):
+    """
+    Read tiff + time.txt + rotary_log, output:
+      frames: tiff image data
+      angles: angle per frame (matched by MonotonicSec)
+    """
+    frames, _, monotonic_secs = load_tiff_and_time(tif_path, txt_path)
+    angles, _ = get_angles_from_monotonic(monotonic_secs, rotary_log_path, window_sec=window_sec)
+    return frames, angles
+
+
+
 
     
     

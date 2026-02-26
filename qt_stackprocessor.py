@@ -12,22 +12,6 @@ from utils_io import get_frame_angles_from_rotary
 import torch
 
 
-class _TiffStackAdapter:
-    def __init__(self, frames, angles):
-        self._frames = frames
-        self._angles = np.asarray(angles, dtype=float)
-
-    def get_frame(self, index):
-        # 1-based index to match SITiffIO behavior.
-        return self._frames[index - 1]
-
-    def get_all_theta(self):
-        return self._angles
-
-    def get_n_frames(self):
-        return int(self._frames.shape[0])
-
-
 class _MeanZStackWorker(QtCore.QObject):
     log = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(object)
@@ -81,7 +65,7 @@ class QtStackProcessor(QtWidgets.QWidget):
 
         self.tifffilename = None
         self.relogfilename = None
-        self.CentreDetectionFolder = None
+        self.DataProcessFolder = None
         self.meanStacks = None
         self.display_index = 0
         self._worker_thread = None
@@ -160,8 +144,8 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.tifffilename = filename
         self.log_message(f"Imported tiff file: {self.tifffilename}")
 
-        self.CentreDetectionFolder = os.path.join(
-            os.path.dirname(self.tifffilename), "CentreDetectionResults"
+        self.DataProcessFolder = os.path.join(
+            os.path.dirname(self.tifffilename), "DataProcessFolder"
         )
 
     def import_RElog(self):
@@ -173,14 +157,17 @@ class QtStackProcessor(QtWidgets.QWidget):
 
         self.relogfilename = filename
         self.log_message(f"Imported RElog file: {self.relogfilename}")
+        if self.app is not None and hasattr(self.app, "zdrift_panel"):
+            # Share RElog path with Z-Drift panel (no separate import there)
+            self.app.zdrift_panel.relogfilename = filename
 
     def getmeanzstack(self):
         if not self.tifffilename or not self.relogfilename:
             self.log_message("Error: Please import both a tiff file and a RElog file.")
             return
-        if self.CentreDetectionFolder is None:
+        if self.DataProcessFolder is None:
             self.log_message(
-                "Error: CentreDetectionResults folder not set. Run center detection first."
+                "Error: DataProcessFolder not set. Run center detection first."
             )
             return
 
@@ -188,11 +175,11 @@ class QtStackProcessor(QtWidgets.QWidget):
         QtWidgets.QApplication.processEvents()
 
         circlecenterfilename = os.path.join(
-            self.CentreDetectionFolder, "circlecenter.txt"
+            self.DataProcessFolder, "circlecenter.txt"
         )
         if not os.path.exists(circlecenterfilename):
             self.log_message(
-                "Error: circlecenter.txt not found in CentreDetectionResults folder."
+                "Error: circlecenter.txt not found in DataProcessFolder."
             )
             self.status_label.setText("Status: Idle")
             return
@@ -289,14 +276,14 @@ class QtStackProcessor(QtWidgets.QWidget):
         return
 
         self.log_message(
-            "Save the mean Zstacks as npy files and png images to the CentreDetectionResults folder."
+            "Save the mean Zstacks as npy files and png images to the DataProcessFolder."
         )
         np.save(
-            os.path.join(self.CentreDetectionFolder, "meanstacks.npy"),
+            os.path.join(self.DataProcessFolder, "meanstacks.npy"),
             self.meanStacks,
         )
 
-        zstack_folder = os.path.join(self.CentreDetectionFolder, "zstacks")
+        zstack_folder = os.path.join(self.DataProcessFolder, "zstacks")
         if os.path.exists(zstack_folder):
             shutil.rmtree(zstack_folder)
         os.mkdir(zstack_folder)
@@ -329,14 +316,14 @@ class QtStackProcessor(QtWidgets.QWidget):
 
     def _finalize_meanstacks(self):
         self.log_message(
-            "Save the mean Zstacks as npy files and png images to the CentreDetectionResults folder."
+            "Save the mean Zstacks as npy files and png images to the DataProcessFolder."
         )
         np.save(
-            os.path.join(self.CentreDetectionFolder, "meanstacks.npy"),
+            os.path.join(self.DataProcessFolder, "meanstacks.npy"),
             self.meanStacks,
         )
 
-        zstack_folder = os.path.join(self.CentreDetectionFolder, "zstacks")
+        zstack_folder = os.path.join(self.DataProcessFolder, "zstacks")
         if os.path.exists(zstack_folder):
             shutil.rmtree(zstack_folder)
         os.mkdir(zstack_folder)

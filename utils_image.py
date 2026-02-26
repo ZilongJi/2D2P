@@ -37,7 +37,7 @@ def RegFrame(frames, device):
 
     rmin, rmax, mean_img, offsets_all, blocks = output
     
-    return mean_img
+    return mean_img, regframes
 
 def _cv2_crop_bounds(h0, w0, rotCenter):
     # OpenCV expects center = (x, y) = (col, row)
@@ -113,7 +113,7 @@ def get_meanframe_from_Zstacks_cv2(
             temp[i] = rotated[upper:lower, left:right]
 
         if ImgReg:
-            meanImg = RegFrame(temp, device)
+            meanImg, _ = RegFrame(temp, device)
         else:
             meanImg = temp.mean(axis=0)
 
