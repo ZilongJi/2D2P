@@ -1,17 +1,85 @@
 import os
+import os
+from pathlib import Path
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, gaussian_filter
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 from PyQt6 import QtCore, QtGui, QtWidgets
+import pyqtgraph as pg
 
 import torch
-from suite2p import default_ops
-from suite2p.registration import register
+from suite2p.registration import zalign
 
-from utils_image import get_unrotate_crop_cv2, RegFrame, compute_zpos_sp, findFOV
+
+from utils_image import get_unrotate_crop_cv2, RegFrame
 from utils_io import load_buffer_frames_and_angles
+
+
+class _ZDriftWorker(QtCore.QObject):
+    log = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal(object, object, object)
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(self, tifffilename, timefilename, relogfilename, datafolder):
+        super().__init__()
+        self._tifffilename = tifffilename
+        self._timefilename = timefilename
+        self._relogfilename = relogfilename
+        self._datafolder = datafolder
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        try:
+            circlecenterfilename = os.path.join(self._datafolder, "circlecenter.txt")
+            if not os.path.exists(circlecenterfilename):
+                raise FileNotFoundError("circlecenter.txt not found in DataProcessFolder.")
+
+            with open(circlecenterfilename, "r", encoding="utf-8") as f:
+                last_line = f.readlines()[-1]
+                rotx = float(last_line.split()[0])
+                roty = float(last_line.split()[1])
+
+            self.log.emit("Reading tiff file and rotary angles...")
+            frames, angles = load_buffer_frames_and_angles(
+                self._tifffilename, self._timefilename, self._relogfilename
+            )
+            orig_shape = frames.shape
+            self.log.emit(f"Raw TIFF shape: {orig_shape}, dtype={frames.dtype}")
+
+            if frames.ndim != 3:
+                raise ValueError(
+                    f"Expected a 3D tiff stack [n_frames, height, width], got {frames.ndim}D."
+                )
+
+            n_frames = frames.shape[0]
+            if angles.size != n_frames:
+                raise ValueError(f"{angles.size} angles for {n_frames} frames; aborting.")
+
+            unrot_frames = get_unrotate_crop_cv2(
+                frames, angles, rotCenter=[rotx, roty]
+            )
+            mean_reg_img = unrot_frames.mean(axis=0)
+
+            meanstacks_path = os.path.join(self._datafolder, "meanstacks.npy")
+            if not os.path.exists(meanstacks_path):
+                raise FileNotFoundError("meanstacks.npy not found in DataProcessFolder.")
+
+            meanstacks = np.load(meanstacks_path)
+            if isinstance(meanstacks, np.ndarray) and meanstacks.ndim == 3:
+                meanstacks = [meanstacks[z] for z in range(meanstacks.shape[0])]
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            corr_matrix = zalign.register_to_zstack(
+                f_align_in=unrot_frames,
+                refImgs=meanstacks,
+                nonrigid=True,
+                device=device,
+            )
+
+            self.finished.emit(unrot_frames, mean_reg_img, corr_matrix)
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class QtZDriftProcessor(QtWidgets.QWidget):
@@ -28,8 +96,15 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.meanRegImg = None
         self.regFrames = None
         self.corrMatrix = None
+        self.unrotFrames = None
+        self._worker_thread = None
+        self._worker = None
+        self._auto_timer = None
+        self._last_auto_key = None
+        self._manual_override = False
 
         self._build_ui()
+        self._start_auto_timer()
 
     def _build_ui(self):
         layout = QtWidgets.QGridLayout(self)
@@ -46,16 +121,19 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.corr_btn.clicked.connect(self.correlationanalysis)
         layout.addWidget(self.corr_btn, 0, 1, 2, 1)
 
-        self.reg_image = QtWidgets.QLabel()
-        self.reg_image.setFixedSize(512, 512)
-        self.reg_image.setStyleSheet("background-color: #4d4d4d;")
-        self.reg_image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.auto_detect_chk = QtWidgets.QCheckBox("Auto Detect & Run")
+        self.auto_detect_chk.setChecked(True)
+        self.auto_detect_chk.stateChanged.connect(self._on_auto_toggle)
+        layout.addWidget(self.auto_detect_chk, 2, 0, 1, 2)
+
+        self.reg_image = pg.ImageView(view=pg.PlotItem())
+        self.reg_image.ui.roiBtn.hide()
+        self.reg_image.ui.menuBtn.hide()
         layout.addWidget(self.reg_image, 4, 0, 1, 2)
 
-        self.corr_image = QtWidgets.QLabel()
-        self.corr_image.setFixedSize(512, 256)
-        self.corr_image.setStyleSheet("background-color: #ffffff;")
-        self.corr_image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.corr_image = pg.ImageView(view=pg.PlotItem())
+        self.corr_image.ui.roiBtn.hide()
+        self.corr_image.ui.menuBtn.hide()
         layout.addWidget(self.corr_image, 5, 0, 1, 2)
 
     def log_message(self, message):
@@ -64,6 +142,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
 
     def set_folder(self, folder):
         self.folder = folder
+        self._manual_override = False
 
     def import_tiff_buffer(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -71,6 +150,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         )
         if not filename:
             return
+        self._manual_override = True
         self.tifffilename = filename
         self.log_message(f"Imported tiff file: {self.tifffilename}")
 
@@ -84,8 +164,65 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         )
         if not filename:
             return
+        self._manual_override = True
         self.timefilename = filename
         self.log_message(f"Imported time.txt file: {self.timefilename}")
+
+    def _start_auto_timer(self):
+        self._auto_timer = QtCore.QTimer(self)
+        self._auto_timer.setInterval(2000)
+        self._auto_timer.timeout.connect(self._auto_detect_files)
+        self._auto_timer.start()
+
+    def _on_auto_toggle(self):
+        if self.auto_detect_chk.isChecked():
+            self._manual_override = False
+
+    def _pick_latest(self, paths):
+        if not paths:
+            return None
+        return max(paths, key=lambda p: p.stat().st_mtime)
+
+    def _auto_detect_files(self):
+        if not self.auto_detect_chk.isChecked():
+            return
+        if self._manual_override:
+            return
+        if self._worker_thread is not None and self._worker_thread.isRunning():
+            return
+        if not self.folder or not os.path.exists(self.folder):
+            return
+
+        folder = Path(self.folder)
+        tif_candidates = list(folder.glob("online_grab_*.tif")) + list(
+            folder.glob("online_grab_*.tiff")
+        )
+        txt_candidates = list(folder.glob("online_grab_*_time.txt"))
+
+        tiff_path = self._pick_latest(tif_candidates)
+        time_path = self._pick_latest(txt_candidates)
+        relog_path = Path(self.relogfilename) if self.relogfilename else None
+        if relog_path is not None and not relog_path.exists():
+            relog_path = None
+
+        if tiff_path is None or time_path is None or relog_path is None:
+            return
+
+        auto_key = (str(tiff_path), str(time_path), str(relog_path))
+        if auto_key == self._last_auto_key:
+            return
+
+        self._last_auto_key = auto_key
+        self.tifffilename = str(tiff_path)
+        self.timefilename = str(time_path)
+        self.relogfilename = str(relog_path)
+        self.DataProcessFolder = os.path.join(
+            os.path.dirname(self.tifffilename), "DataProcessFolder"
+        )
+        self.log_message(
+            f"Auto-detected files: {self.tifffilename}, {self.timefilename}, {self.relogfilename}"
+        )
+        self.correlationanalysis()
 
     def correlationanalysis(self):
         if not self.tifffilename or not self.timefilename or not self.relogfilename:
@@ -103,97 +240,37 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         if self.app is not None:
             self.app.log_message("Unrotate tiff file and perform image registration...")
 
-        circlecenterfilename = os.path.join(self.DataProcessFolder, "circlecenter.txt")
-        if not os.path.exists(circlecenterfilename):
-            self.log_message("Error: circlecenter.txt not found in DataProcessFolder.")
-            return
-
-        with open(circlecenterfilename, "r", encoding="utf-8") as f:
-            last_line = f.readlines()[-1]
-            self.rotx = float(last_line.split()[0])
-            self.roty = float(last_line.split()[1])
-
-        self.log_message("Reading tiff file and rotary angles...")
-        frames, angles = load_buffer_frames_and_angles(
-            self.tifffilename, self.timefilename, self.relogfilename
+        self.corr_btn.setEnabled(False)
+        self._worker_thread = QtCore.QThread(self)
+        self._worker = _ZDriftWorker(
+            self.tifffilename, self.timefilename, self.relogfilename, self.DataProcessFolder
         )
-        orig_shape = frames.shape
-        self.log_message(f"Raw TIFF shape: {orig_shape}, dtype={frames.dtype}")
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.log.connect(self.log_message)
+        self._worker.finished.connect(self._on_worker_finished)
+        self._worker.error.connect(self._on_worker_error)
+        self._worker.finished.connect(self._worker_thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+        self._worker_thread.start()
 
-        if frames.ndim != 3:
-            self.log_message(
-                f"Error: Expected a 3D tiff stack [n_frames, height, width], got {frames.ndim}D."
-            )
-            return
-
-        n_frames = frames.shape[0]
-
-        if angles.size != n_frames:
-            self.log_message(
-                f"Error: {angles.size} angles for {n_frames} frames; aborting."
-            )
-            return
-
-        self.unrotFrames = get_unrotate_crop_cv2(
-            frames, angles, rotCenter=[self.rotx, self.roty]
-        )
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.meanRegImg, self.regFrames = RegFrame(self.unrotFrames, device)
-
-        self.display_regFrame()
-
-        if self.app is not None:
-            self.app.log_message("Perform Correlation Analysis...")
-
-        meanstacks_path = os.path.join(self.DataProcessFolder, "meanstacks.npy")
-        if not os.path.exists(meanstacks_path):
-            self.log_message("Error: meanstacks.npy not found in DataProcessFolder.")
-            return
-
-        meanstacks = np.load(meanstacks_path)
-        ops = default_ops.default_ops()
-        _, _, self.corrMatrix = compute_zpos_sp(meanstacks, self.regFrames, ops)
-        self.corrMatrix = gaussian_filter1d(self.corrMatrix.copy(), 2, axis=0)
-
-        maxrotangle = 30
-        interval = maxrotangle // 3
-        _, _, mean_zcorr = findFOV(
-            meanstacks, self.meanRegImg, maxrotangle=maxrotangle
-        )
-        mean_zcorr_gs = gaussian_filter(mean_zcorr.copy(), 2)
-        maxvalue = np.max(mean_zcorr_gs)
-        maxindex = np.where(mean_zcorr_gs == maxvalue)
-
-        fig = plt.figure()
-        plt.imshow(mean_zcorr_gs, cmap="coolwarm", aspect="auto")
-        plt.xticks(
-            np.arange(0, 2 * maxrotangle + 1, interval),
-            np.arange(-maxrotangle, maxrotangle + 1, interval),
-        )
-        plt.colorbar()
-        plt.title(f"zcorr map, maxzplane={maxindex[0][0]}")
-        plt.xlabel("rotation degree")
-        plt.ylabel("stack index")
-        plt.plot(maxindex[1][0], maxindex[0][0], "ro")
-        fig.savefig(os.path.join(self.DataProcessFolder, "maxcorrmeanframe.png"))
-        plt.close(fig)
-
+    def _on_worker_finished(self, unrot_frames, mean_reg_img, corr_matrix):
+        self.unrotFrames = unrot_frames
+        self.meanRegImg = mean_reg_img
+        self.corrMatrix = corr_matrix
+        self.display_meanFrame()
         self.display_corrMatrix()
+        self.corr_btn.setEnabled(True)
 
-    def display_regFrame(self):
-        fig = plt.figure(figsize=(512 / 100, 512 / 100), dpi=100)
-        plt.imshow(self.meanRegImg, cmap="gray")
-        plt.axis("off")
-        fig.savefig(os.path.join(self.DataProcessFolder, "meanReg.png"))
-        plt.close(fig)
+    def _on_worker_error(self, message):
+        self.log_message(f"Error: {message}")
+        self.corr_btn.setEnabled(True)
 
-        pixmap = QtGui.QPixmap(os.path.join(self.DataProcessFolder, "meanReg.png"))
-        self.reg_image.setPixmap(pixmap.scaled(
-            self.reg_image.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        ))
+    def display_meanFrame(self):
+        if self.meanRegImg is None:
+            return
+        self.reg_image.setImage(self.meanRegImg, autoLevels=True)
 
     def display_corrMatrix(self):
         fig = plt.figure(figsize=(512 / 100, 256 / 100), dpi=100)
@@ -236,12 +313,10 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         fig.savefig(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
         plt.close(fig)
 
-        pixmap = QtGui.QPixmap(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
-        self.corr_image.setPixmap(pixmap.scaled(
-            self.corr_image.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        ))
+        corr_img = plt.imread(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
+        if corr_img.ndim == 3:
+            corr_img = corr_img[:, :, 0]
+        self.corr_image.setImage(corr_img, autoLevels=True)
 
         if self.app is not None:
             if shiftamount < 0:
