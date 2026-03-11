@@ -252,6 +252,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self._worker.error.connect(self._on_worker_error)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
+        self._worker_thread.finished.connect(self._on_thread_finished)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
         self._worker_thread.start()
 
@@ -267,10 +268,14 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.log_message(f"Error: {message}")
         self.corr_btn.setEnabled(True)
 
+    def _on_thread_finished(self):
+        self._worker_thread = None
+        self._worker = None
+
     def display_meanFrame(self):
         if self.meanRegImg is None:
             return
-        self.reg_image.setImage(self.meanRegImg, autoLevels=True)
+        self.reg_image.setImage(np.rot90(self.meanRegImg, 1), autoLevels=True)
 
     def display_corrMatrix(self):
         fig = plt.figure(figsize=(512 / 100, 256 / 100), dpi=100)
@@ -316,7 +321,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         corr_img = plt.imread(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
         if corr_img.ndim == 3:
             corr_img = corr_img[:, :, 0]
-        self.corr_image.setImage(corr_img, autoLevels=True)
+        self.corr_image.setImage(np.rot90(corr_img, 1), autoLevels=True)
 
         if self.app is not None:
             if shiftamount < 0:

@@ -17,7 +17,7 @@ from suite2p.registration import register, rigid
 from utils_io import get_imaging_files, get_rotary_center
 
 
-def RegFrame(frames, device):
+def RegFrame(frames, device, block_size=(64, 64), nonrigid=True):
     '''
     Perform image registration on the frames
     Input:
@@ -33,7 +33,15 @@ def RegFrame(frames, device):
     N = frames.shape[0]
     #perform image registration with built-in suite2p function
     regframes = np.zeros_like(frames)
-    output = register.register_frames(f_align_in=frames, refImg=refImg, f_align_out=regframes, batch_size=N, block_size=[32,32], nonrigid=True, device=device)
+    output = register.register_frames(
+        f_align_in=frames,
+        refImg=refImg,
+        f_align_out=regframes,
+        batch_size=N,
+        block_size=list(block_size),
+        nonrigid=bool(nonrigid),
+        device=device,
+    )
 
     rmin, rmax, mean_img, offsets_all, blocks = output
     
@@ -61,6 +69,8 @@ def get_meanframe_from_Zstacks_cv2(
     Rotcenter,
     device,
     ImgReg=True,
+    block_size=(128, 128),
+    nonrigid=True,
     log_fn=None,
 ):
     """
@@ -113,7 +123,12 @@ def get_meanframe_from_Zstacks_cv2(
             temp[i] = rotated[upper:lower, left:right]
 
         if ImgReg:
-            meanImg, _ = RegFrame(temp, device)
+            meanImg, _ = RegFrame(
+                temp,
+                device,
+                block_size=block_size,
+                nonrigid=nonrigid,
+            )
         else:
             meanImg = temp.mean(axis=0)
 
@@ -124,6 +139,107 @@ def get_meanframe_from_Zstacks_cv2(
 
     _log("Getting the mean Z stack frames -- Done! Time used: {}".format(time.time() - t0))
     return meanZstacks
+
+
+def _circular_mean_deg(deg_array):
+    """
+    Circular mean for angles in degrees.
+    """
+    rad = np.deg2rad(deg_array)
+    s = np.mean(np.sin(rad))
+    c = np.mean(np.cos(rad))
+    return np.rad2deg(np.arctan2(s, c))
+
+
+def get_meanframe_from_Zstacks_cv2_reg_then_unrotcrop(
+    frames,
+    angles,
+    volume,
+    stacks,
+    frames_per_stack,
+    rot_center_xy,          # IMPORTANT: (x, y), keep xy consistent everywhere
+    device,
+    ImgReg=True,
+    block_size=(128, 128),
+    nonrigid=True,
+    log_fn=None,
+):
+    """
+    New flow per stack:
+    1) Collect raw frames of this stack
+    2) (optional) RegFrame on raw frames
+    3) Compute mean image
+    4) Unrotate mean image once (using circular-mean angle of this stack)
+    5) Crop largest inner square
+    """
+    def _log(msg):
+        if log_fn is not None:
+            log_fn(msg)
+        else:
+            print(msg)
+
+    _log("Extract mean Z stack frames: RegFrame first, then unrotate+crop mean frame...")
+    t0 = time.time()
+
+    frames = np.asarray(frames)
+    angles = np.asarray(angles, dtype=float)
+
+    if frames.ndim != 3:
+        raise ValueError(f"frames must be 3D [n_frames,h,w], got {frames.ndim}D")
+
+    n_frames = frames.shape[0]
+    expected = volume * stacks * frames_per_stack
+    if n_frames != expected:
+        raise ValueError(f"Actual frames: got {n_frames}, expected {expected}")
+
+    h0, w0 = frames[0].shape[:2]
+    cx, cy, left, right, upper, lower = _cv2_crop_bounds(h0, w0, rot_center_xy)
+    out_h = lower - upper
+    out_w = right - left
+
+    meanZstacks = np.zeros((stacks, out_h, out_w), dtype=np.int16)
+
+    for stack_i in range(stacks):
+        t_stack0 = time.time()
+        _log(f"Processing stack {stack_i + 1}/{stacks}")
+
+        inds = np.zeros((volume * frames_per_stack), dtype=np.int32)
+        for vi in range(volume):
+            start = vi * stacks * frames_per_stack + stack_i * frames_per_stack
+            inds[vi * frames_per_stack:(vi + 1) * frames_per_stack] = np.arange(
+                start, start + frames_per_stack, dtype=np.int32
+            )
+
+        stack_frames = frames[inds].astype(np.float32, copy=False)
+        stack_angles = angles[inds]
+
+        # 1) registration first (on raw stack frames)
+        if ImgReg:
+            mean_img, _ = RegFrame(
+                stack_frames,
+                device=device,
+                block_size=block_size,
+                nonrigid=nonrigid,
+            )
+        else:
+            mean_img = stack_frames.mean(axis=0)
+
+        # 2) unrotate mean image once, using representative stack angle
+        mean_angle = _circular_mean_deg(stack_angles)
+        M = cv2.getRotationMatrix2D((cx, cy), mean_angle, 1.0)
+        mean_rot = cv2.warpAffine(mean_img, M, (w0, h0), flags=cv2.INTER_LINEAR)
+
+        # 3) crop
+        mean_crop = mean_rot[upper:lower, left:right]
+
+        meanZstacks[stack_i] = np.clip(
+            np.rint(mean_crop), np.iinfo(np.int16).min, np.iinfo(np.int16).max
+        ).astype(np.int16)
+
+        _log(f"Stack {stack_i + 1} done. Time used: {time.time() - t_stack0:.2f} sec")
+
+    _log(f"Done. Total time: {time.time() - t0:.2f} sec")
+    return meanZstacks, mean_img
 
 def getMeantiff(data, frac=1.0):
     """

@@ -27,6 +27,8 @@ class _MeanZStackWorker(QtCore.QObject):
         Rotcenter,
         device,
         ImgReg,
+        block_size,
+        nonrigid,
     ):
         super().__init__()
         self._frames = frames
@@ -37,6 +39,8 @@ class _MeanZStackWorker(QtCore.QObject):
         self._Rotcenter = Rotcenter
         self._device = device
         self._ImgReg = ImgReg
+        self._block_size = block_size
+        self._nonrigid = nonrigid
 
     @QtCore.pyqtSlot()
     def run(self):
@@ -49,6 +53,8 @@ class _MeanZStackWorker(QtCore.QObject):
                 frames_per_stack=self._frames_per_stack,
                 Rotcenter=self._Rotcenter,
                 ImgReg=self._ImgReg,
+                block_size=self._block_size,
+                nonrigid=self._nonrigid,
                 device=self._device,
                 log_fn=self.log.emit,
             )
@@ -102,6 +108,20 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.frames.setFixedWidth(60)
         fields_row.addWidget(self.frames)
 
+        self.imgreg_chk = QtWidgets.QCheckBox("Image registration")
+        self.imgreg_chk.setChecked(True)
+        self.imgreg_chk.toggled.connect(self._on_imgreg_toggled)
+        fields_row.addWidget(self.imgreg_chk)
+
+        fields_row.addWidget(QtWidgets.QLabel("Block size:"))
+        self.block_size = QtWidgets.QLineEdit("64,64")
+        self.block_size.setFixedWidth(70)
+        fields_row.addWidget(self.block_size)
+
+        self.nonrigid_chk = QtWidgets.QCheckBox("Nonrigid")
+        self.nonrigid_chk.setChecked(True)
+        fields_row.addWidget(self.nonrigid_chk)
+
         self.process_btn = QtWidgets.QPushButton("Get mean Zstacks")
         self.process_btn.clicked.connect(self.getmeanzstack)
         fields_row.addWidget(self.process_btn)
@@ -127,9 +147,15 @@ class QtStackProcessor(QtWidgets.QWidget):
         self.image_view.ui.menuBtn.hide()
         layout.addWidget(self.image_view, 6, 0, 1, 3)
 
+        self._on_imgreg_toggled(self.imgreg_chk.isChecked())
+
     def log_message(self, message):
         if self.app is not None:
             self.app.log_message(message)
+
+    def _on_imgreg_toggled(self, checked):
+        self.block_size.setEnabled(checked)
+        self.nonrigid_chk.setEnabled(checked)
         
     def set_folder(self, folder):
         self.folder = folder
@@ -197,6 +223,16 @@ class QtStackProcessor(QtWidgets.QWidget):
             self.status_label.setText("Status: Idle")
             return
 
+        try:
+            bs_parts = [int(x.strip()) for x in self.block_size.text().split(",")]
+            if len(bs_parts) != 2:
+                raise ValueError
+            block_size = (bs_parts[0], bs_parts[1])
+        except ValueError:
+            self.log_message("Error! Block size must be like 64,64")
+            self.status_label.setText("Status: Idle")
+            return
+
         self.log_message("Reading tiff file with tifffile...")
         frames = tifffile.imread(self.tifffilename)
 
@@ -260,7 +296,9 @@ class QtStackProcessor(QtWidgets.QWidget):
             frames_per_stack=num_f,
             Rotcenter=[self.rotx, self.roty],
             device=device,
-            ImgReg=True,
+            ImgReg=self.imgreg_chk.isChecked(),
+            block_size=block_size,
+            nonrigid=self.nonrigid_chk.isChecked(),
         )
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
