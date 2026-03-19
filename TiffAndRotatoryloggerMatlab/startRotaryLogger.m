@@ -58,13 +58,15 @@ function R = startRotaryLogger(varargin)
     % ========= user config =========
     cfg.comPort      = 'COM7';
     cfg.countsPerRev = 36800;
-    cfg.sampleHz     = 200;
+    cfg.sampleHz     = 100;
 
     cfg.outDir       = outDir;             % <-- REQUIRED from caller
     cfg.baseName     = 'rotary_stream';
 
-    cfg.serialTimeoutSec = 0.005;          % try 0.005 / 0.01
+    cfg.serialTimeoutSec = 0.02;           % safer under disk I/O load
     cfg.batchN       = 500;
+    cfg.maxConsecutiveNaN = 10;            % trigger stronger recovery after streak
+    cfg.nanFlushEvery = 5;                 % avoid flushing every failed tick
 
     % DateTime formatting (datestr)
     cfg.dateTimeFormat = 'yyyy-mm-dd HH:MM:SS.FFF';
@@ -82,15 +84,7 @@ function R = startRotaryLogger(varargin)
     % Avoids per-tick OS time reads (less jitter, no NTP jumps).
     DT0 = datetime('now');
 
-    % close leftovers (best-effort) — OK to keep, but note it closes all serial objects
-    try
-        objs = instrfind;
-        if ~isempty(objs)
-            try, fclose(objs); catch, end
-            try, delete(objs); catch, end
-        end
-    catch
-    end
+    % Keep other instrument/serial objects untouched.
 
     % open COM
     maxAttempts = 5;
@@ -134,6 +128,7 @@ function R = startRotaryLogger(varargin)
     aBuf  = nan(batchN, 1);
     dtBuf = strings(batchN, 1);
     bIdx  = 0;
+    nanStreak = 0;
 
     % stop state flags
     isStopped = false;
@@ -186,6 +181,31 @@ function R = startRotaryLogger(varargin)
         dtStr = datestr(dtNow, cfg.dateTimeFormat);
     
         ang   = readAngleDeg_FAST(E2019Q_ID, cfg.countsPerRev);
+        if isnan(ang)
+            nanStreak = nanStreak + 1;
+            % Recovery should not run on every failed tick; otherwise we may
+            % repeatedly drop fresh incoming bytes and get stuck.
+            if nanStreak == 1 || mod(nanStreak, cfg.nanFlushEvery) == 0
+                try, flushinput(E2019Q_ID); catch, end
+            end
+
+            % One quick retry after recovery attempt.
+            angRetry = readAngleDeg_FAST(E2019Q_ID, cfg.countsPerRev);
+            if ~isnan(angRetry)
+                ang = angRetry;
+                nanStreak = 0;
+            end
+
+            if nanStreak >= cfg.maxConsecutiveNaN
+                % Escalate recovery when NaN repeats for a while.
+                try
+                    E2019Q_ID.Timeout = max(E2019Q_ID.Timeout, 0.05);
+                catch
+                end
+            end
+        else
+            nanStreak = 0;
+        end
     
         bIdx = bIdx + 1;
         if bIdx > batchN

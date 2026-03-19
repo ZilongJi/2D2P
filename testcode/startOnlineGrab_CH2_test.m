@@ -2,7 +2,7 @@ function S = startOnlineGrab_CH2(varargin)
 % startOnlineGrab_CH2
 % 每次调用都强制重启 Online Grab：
 %  - 从 hSI 的 appdata 里杀掉 ghost RollingLastFramesSaver
-%  - 清理 instrument/serial 对象（instrfind）
+%  - 不再全局清理 instrument/serial 对象，避免误关正在运行的 rotary logger
 %  - 删除 base workspace 里的旧 S
 %  - 创建新 RollingLastFramesSaver，应用配置，resetBuffer
 %
@@ -45,7 +45,8 @@ function S = startOnlineGrab_CH2(varargin)
     cfg.saveEverySec = 30;      % 每隔多少秒保存一次
     cfg.outDir = outDir;        % <-- REQUIRED from caller
     cfg.baseName = 'online_grab_CH2';
-    cfg.onlySaveWhenBufferFilled = true;
+    % 必须按时间窗口稳定产出文件给下游分析，因此不要求先填满 N 帧
+    cfg.onlySaveWhenBufferFilled = false;
     % =======================================
 
     % 0) 杀掉 hSI appdata 中记录的 ghost（最可靠）
@@ -60,8 +61,13 @@ function S = startOnlineGrab_CH2(varargin)
     catch
     end
 
-    % 1) 不再全局清理 instrument/serial。
-    %    原逻辑会把正在运行的 rotary logger 串口也关闭，导致角度立即出现 NaN。
+    % 1) IMPORTANT:
+    %    这里不要全局清理 instrfind 对象。
+    %    因为 startRotaryLogger 会保持一个打开的 serial（例如 COM7），
+    %    如果这里 fclose/delete 全部 instrument，会把 rotary 的串口也关掉，
+    %    然后 rotary 定时器读角度就会变成 NaN。
+    %
+    %    如果确实需要清理串口，请在 rotary logger 未运行时手动执行。
 
     % 2) 强制清理 base workspace 里的旧对象 S
     try
@@ -73,24 +79,20 @@ function S = startOnlineGrab_CH2(varargin)
     catch
     end
 
-    % 3) 创建新对象
-    S = RollingLastFramesSaver;
+    % 3) 创建新对象（在构造时就传入配置，确保启动日志即为目标参数）
+    S = RollingLastFramesSaver( ...
+        'channelToUse', cfg.channelToUse, ...
+        'N', cfg.N, ...
+        'saveEverySec', cfg.saveEverySec, ...
+        'outDir', cfg.outDir, ...
+        'baseName', cfg.baseName, ...
+        'onlySaveWhenBufferFilled', cfg.onlySaveWhenBufferFilled);
 
-    % 4) 应用配置
-    %    注意：RollingLastFramesSaver 构造函数里会创建 listener，
-    %    N/通道等参数改变后，第一次收到帧时会按新 N 自动 allocate buffers
-    S.channelToUse = cfg.channelToUse;
-    S.N = cfg.N;
-    S.saveEverySec = cfg.saveEverySec;
-    S.outDir = cfg.outDir;
-    S.baseName = cfg.baseName;
-    S.onlySaveWhenBufferFilled = cfg.onlySaveWhenBufferFilled;
-
-    % 5) 重置 buffer + 打印确认
+    % 4) 重置 buffer + 打印确认
     S.resetBuffer();
     S.printConfig();
 
-    % 6) 放回 base workspace（便于你随时手动 delete(S) 或查看状态）
+    % 5) 放回 base workspace（便于你随时手动 delete(S) 或查看状态）
     assignin('base','S',S);
 
     fprintf('=== Online Grab 已重启：现在可以 Focus / Grab ===\n');
