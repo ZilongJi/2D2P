@@ -1,12 +1,16 @@
 import os
 import os
+import time
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import MaxNLocator, FormatStrFormatter
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
+
+pg.setConfigOptions(imageAxisOrder="row-major")
 
 import torch
 from suite2p.registration import zalign
@@ -94,6 +98,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.DataProcessFolder = None
 
         self.meanRegImg = None
+        self.closestStackImg = None
         self.regFrames = None
         self.corrMatrix = None
         self.unrotFrames = None
@@ -101,6 +106,9 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self._worker = None
         self._auto_timer = None
         self._last_auto_key = None
+        self._pending_auto_key = None
+        self._pending_auto_since = None
+        self._auto_delay_sec = 3.0
         self._manual_override = False
 
         self._build_ui()
@@ -129,7 +137,14 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.reg_image = pg.ImageView(view=pg.PlotItem())
         self.reg_image.ui.roiBtn.hide()
         self.reg_image.ui.menuBtn.hide()
-        layout.addWidget(self.reg_image, 4, 0, 1, 2)
+        self.reg_image.getView().setTitle("Mean Reg Image")
+        layout.addWidget(self.reg_image, 4, 0, 1, 1)
+
+        self.stack_image = pg.ImageView(view=pg.PlotItem())
+        self.stack_image.ui.roiBtn.hide()
+        self.stack_image.ui.menuBtn.hide()
+        self.stack_image.getView().setTitle("Closest Z-Stack")
+        layout.addWidget(self.stack_image, 4, 1, 1, 1)
 
         self.corr_image = pg.ImageView(view=pg.PlotItem())
         self.corr_image.ui.roiBtn.hide()
@@ -177,6 +192,44 @@ class QtZDriftProcessor(QtWidgets.QWidget):
     def _on_auto_toggle(self):
         if self.auto_detect_chk.isChecked():
             self._manual_override = False
+            self._pending_auto_key = None
+            self._pending_auto_since = None
+
+    def _get_num_stacks(self):
+        if not self.DataProcessFolder:
+            return None
+        meanstacks_path = os.path.join(self.DataProcessFolder, "meanstacks.npy")
+        if not os.path.exists(meanstacks_path):
+            return None
+        try:
+            meanstacks = np.load(meanstacks_path)
+        except Exception:
+            return None
+        if not isinstance(meanstacks, np.ndarray):
+            return None
+        if meanstacks.ndim == 2:
+            return 1
+        if meanstacks.ndim == 3:
+            return int(meanstacks.shape[0])
+        return None
+
+    def _corr_as_plane_frame(self):
+        if self.corrMatrix is None:
+            return None
+        corr = np.asarray(self.corrMatrix)
+        if corr.ndim != 2:
+            return corr
+
+        nstacks = self._get_num_stacks()
+        if nstacks is None:
+            return corr
+
+        # Normalize to [n_stacks, n_frames] for plotting and shift readout.
+        if corr.shape[0] == nstacks and corr.shape[1] != nstacks:
+            return corr
+        if corr.shape[1] == nstacks and corr.shape[0] != nstacks:
+            return corr.T
+        return corr
 
     def _pick_latest(self, paths):
         if not paths:
@@ -212,6 +265,20 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         if auto_key == self._last_auto_key:
             return
 
+        now = time.monotonic()
+        if auto_key != self._pending_auto_key:
+            self._pending_auto_key = auto_key
+            self._pending_auto_since = now
+            self.log_message(
+                f"Detected new buffer files, waiting {self._auto_delay_sec:.0f}s before analysis..."
+            )
+            return
+
+        if self._pending_auto_since is None or (now - self._pending_auto_since) < self._auto_delay_sec:
+            return
+
+        self._pending_auto_key = None
+        self._pending_auto_since = None
         self._last_auto_key = auto_key
         self.tifffilename = str(tiff_path)
         self.timefilename = str(time_path)
@@ -261,6 +328,7 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         self.meanRegImg = mean_reg_img
         self.corrMatrix = corr_matrix
         self.display_meanFrame()
+        self.display_closest_stack_frame()
         self.display_corrMatrix()
         self.corr_btn.setEnabled(True)
 
@@ -275,32 +343,94 @@ class QtZDriftProcessor(QtWidgets.QWidget):
     def display_meanFrame(self):
         if self.meanRegImg is None:
             return
-        self.reg_image.setImage(np.rot90(self.meanRegImg, 1), autoLevels=True)
+        img = np.asarray(self.meanRegImg, dtype=np.float32)
+        if img.ndim == 3:
+            img = img.mean(axis=0)
+        if not np.isfinite(img).all():
+            img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
+
+        p1, p99 = np.percentile(img, [1, 99])
+        if not np.isfinite(p1) or not np.isfinite(p99) or p99 <= p1:
+            p1 = float(np.min(img))
+            p99 = float(np.max(img))
+            if p99 <= p1:
+                p99 = p1 + 1.0
+
+        self.reg_image.setImage(img, autoLevels=False, levels=(p1, p99))
+        self.reg_image.getView().autoRange()
+
+    def display_closest_stack_frame(self):
+        corr = self._corr_as_plane_frame()
+        if corr is None or not self.DataProcessFolder:
+            return
+
+        meanstacks_path = os.path.join(self.DataProcessFolder, "meanstacks.npy")
+        if not os.path.exists(meanstacks_path):
+            return
+
+        meanstacks = np.load(meanstacks_path)
+        if not isinstance(meanstacks, np.ndarray):
+            return
+        if meanstacks.ndim == 2:
+            meanstacks = meanstacks[np.newaxis, ...]
+        if meanstacks.ndim != 3 or meanstacks.shape[0] == 0:
+            return
+
+        sumCorrByPlane = np.sum(corr, axis=1)
+        maxIndex = int(np.argmax(sumCorrByPlane))
+        maxIndex = max(0, min(maxIndex, meanstacks.shape[0] - 1))
+
+        img = np.asarray(meanstacks[maxIndex], dtype=np.float32)
+        if not np.isfinite(img).all():
+            img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
+
+        p1, p99 = np.percentile(img, [1, 99])
+        if not np.isfinite(p1) or not np.isfinite(p99) or p99 <= p1:
+            p1 = float(np.min(img))
+            p99 = float(np.max(img))
+            if p99 <= p1:
+                p99 = p1 + 1.0
+
+        self.closestStackImg = img
+        self.stack_image.setImage(img, autoLevels=False, levels=(p1, p99))
+        self.stack_image.getView().autoRange()
 
     def display_corrMatrix(self):
-        fig = plt.figure(figsize=(512 / 100, 256 / 100), dpi=100)
-        nplanes, nframes = self.corrMatrix.shape
+        corr = self._corr_as_plane_frame()
+        if corr is None or corr.ndim != 2:
+            return
 
-        gs = GridSpec(1, 2, width_ratios=[3, 1])
+        fig = plt.figure(figsize=(10.0, 2.8), dpi=120)
+        nplanes, nframes = corr.shape
+
+        gs = GridSpec(1, 2, width_ratios=[5, 1.2])
 
         ax1 = fig.add_subplot(gs[0, 0])
-        ax1.imshow(self.corrMatrix, aspect="auto", cmap="gray")
+        ax1.imshow(corr, aspect="auto", cmap="gray")
         ax1.set_xlabel("Frame Number")
         ax1.set_ylabel("Stack index")
-        ax1.set_yticks(np.arange(0, nplanes, 5))
-        ax1.set_yticklabels(np.arange(0, nplanes, 5) - int(nplanes / 2))
-        ax1.axhline(y=nplanes / 2, color="r", linestyle="-")
+        ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+        y_ticks = np.arange(0, nplanes, 5)
+        center_idx = int((nplanes - 1) / 2)
+        y_tick_labels = center_idx - y_ticks
+        ax1.set_yticks(y_ticks)
+        ax1.set_yticklabels(y_tick_labels)
+        ax1.axhline(y=(nplanes - 1) / 2.0, color="r", linestyle="-")
+        ax1.set_xlim(-0.5, nframes - 0.5)
 
         ax2 = fig.add_subplot(gs[0, 1])
-        sumCorrMatrix = np.sum(self.corrMatrix, axis=1)
-        ax2.plot(sumCorrMatrix, np.arange(0, nplanes), color="grey")
-        ax2.set_xlabel("Sum of cc")
-        ax2.set_yticks(np.arange(0, nplanes, 5))
-        ax2.set_yticklabels(np.arange(0, nplanes, 5) - int(nplanes / 2))
+        sumCorrByPlane = np.sum(corr, axis=1)
+        z_indices = np.arange(0, nplanes)
+        ax2.plot(sumCorrByPlane, z_indices, color="grey")
+        ax2.set_xlabel("Sum of correlation value")
+        ax2.set_ylabel("Z-stack number")
+        ax2.set_yticks(y_ticks)
+        ax2.set_yticklabels(y_tick_labels)
+        ax2.xaxis.set_major_locator(MaxNLocator(nbins=4))
+        ax2.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
         ax2.set_ylim(ax2.get_ylim()[::-1])
-        ax2.axhline(y=nplanes / 2, color="r", linestyle="-")
-        maxIndex = np.argmax(sumCorrMatrix)
-        ax2.plot(sumCorrMatrix[maxIndex], maxIndex, "ro")
+        maxIndex = np.argmax(sumCorrByPlane)
+        ax2.plot(sumCorrByPlane[maxIndex], maxIndex, "ro")
 
         shiftamount = maxIndex - int(nplanes / 2)
         ax2.text(
@@ -321,7 +451,8 @@ class QtZDriftProcessor(QtWidgets.QWidget):
         corr_img = plt.imread(os.path.join(self.DataProcessFolder, "corrMatrix.png"))
         if corr_img.ndim == 3:
             corr_img = corr_img[:, :, 0]
-        self.corr_image.setImage(np.rot90(corr_img, 1), autoLevels=True)
+        self.corr_image.setImage(corr_img, autoLevels=True)
+        self.corr_image.getView().autoRange()
 
         if self.app is not None:
             if shiftamount < 0:
